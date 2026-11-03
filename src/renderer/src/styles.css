@@ -51,8 +51,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .iconbtn { border: none; background: none; color: var(--muted); padding: 2px 8px; }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bar { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.bar .folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
-.bar .muted:first-of-type { margin-left: auto; }
+.bar .muted:first-of-type, .bar .ctx { margin-left: auto; }
 select.warn { border-color: var(--warn); color: var(--warn); }
 .check { display: inline-flex; gap: 6px; align-items: center; }
 .muted { color: var(--muted); }
@@ -114,10 +113,6 @@ select.warn { border-color: var(--warn); color: var(--warn); }
 .field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .mcpcard { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 10px 0; }
 
-.history { margin: 8px 14px 0; border: 1px solid var(--border); border-radius: 8px; max-height: 240px; overflow: auto; padding: 4px; background: var(--bg2); display: flex; flex-direction: column; }
-.history > .muted { padding: 8px; }
-.historyitem { display: flex; justify-content: space-between; gap: 12px; border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 6px; }
-.historyitem:hover { background: var(--bg3); }
 .historytitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }

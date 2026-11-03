@@ -36,12 +36,15 @@ export function AccountMenu({ settings, onSettings }: { settings?: SettingsView;
 
   // The website's own answer wins; the name and email typed in Settings are the fallback.
   const typedName = settings?.profileName.trim()
-  const name = info.profile?.name || typedName || (signedIn ? 'Mistral account' : 'Not signed in')
+  const known = signedIn || !!info.webSignedIn
+  const name = info.profile?.name || typedName || (known ? 'Mistral account' : 'Not signed in')
   const email = info.profile?.email || settings?.profileEmail.trim()
-  const plan = planLabel(info)
-  const ready = !!settings && (!signedIn || loaded || !!typedName)
-  const initial = !ready ? '' : info.profile?.name || typedName ? (info.profile?.name || typedName)![0]!.toUpperCase() : signedIn ? 'M' : '?'
+  const plan = signedIn ? planLabel(info) : ''
+  const subtitle = plan || info.profile?.organization || ''
+  const ready = !!settings && (loaded || !!typedName)
+  const initial = !ready ? '' : info.profile?.name || typedName ? (info.profile?.name || typedName)![0]!.toUpperCase() : known ? 'M' : '?'
   const webSignIn = async (): Promise<void> => { setWebBusy(true); setInfo(await window.api.account.webSignIn()); setWebBusy(false) }
+  const settingsLink = (): void => { setOpen(false); onSettings() }
 
   return (
     <div className="accountbox" ref={box}>
@@ -51,45 +54,56 @@ export function AccountMenu({ settings, onSettings }: { settings?: SettingsView;
             <span className="avatar big" aria-hidden="true">{initial}</span>
             <div className="popwho"><strong>{name}</strong>{email && <span className="muted">{email}</span>}</div>
           </div>
-          {!signedIn ? (
-            <div className="popsection"><p className="muted">Sign in with Mistral or add an API key to see your plan and limits.</p><button className="primary wide" onClick={() => { setOpen(false); onSettings() }}>Open Settings</button></div>
-          ) : (
+
+          {/* Vibe Code: the API key used by the Code and Chat tabs. */}
+          <div className="popsection">
+            {signedIn ? (
+              <div className="poprow"><span>Plan</span><span className="muted">{plan || 'Unavailable'}</span></div>
+            ) : (
+              <>
+                <h4>Vibe Code</h4>
+                <p className="muted limitnote">Not signed in. The Code and Chat tabs need an API key.</p>
+                <button className="wide" onClick={settingsLink}>Sign in: Vibe Code (Settings)</button>
+              </>
+            )}
+          </div>
+
+          {/* Le Chat: the web account, for name, organisation and budget. */}
+          {info.webSignedIn ? (
             <>
-              <div className="popsection">
-                {info.profile?.organization && <div className="poprow"><span>Organisation</span><span className="muted">{info.profile.organization}</span></div>}
-                <div className="poprow"><span>Plan</span><span className="muted">{plan || 'Unavailable'}</span></div>
-              </div>
-              {info.webSignedIn ? (
-                info.budget ? (
-                  <div className="popsection">
-                    <h4>Budget</h4>
-                    <div className="poprow"><span>Usage</span><span className="muted">{formatUsage(info.budget.usagePercent)}</span></div>
-                    <div className="meter" role="meter" aria-label="Usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(info.budget.usagePercent)}><span style={{ width: `${Math.min(100, info.budget.usagePercent)}%` }} /></div>
-                    <div className="poprow"><span>Budget</span><span className="muted">{formatBudget(info.budget)}</span></div>
-                    {info.budget.resetAt && <div className="poprow"><span>Resets</span><span className="muted">{new Date(info.budget.resetAt).toLocaleDateString()}</span></div>}
-                  </div>
-                ) : (
-                  <div className="popsection"><p className="muted limitnote">Signed in on the web, but no budget data came back.</p></div>
-                )
-              ) : (
+              {info.profile?.organization && (
+                <div className="popsection"><div className="poprow"><span>Organisation</span><span className="muted">{info.profile.organization}</span></div></div>
+              )}
+              {info.budget ? (
                 <div className="popsection">
                   <h4>Budget</h4>
-                  <p className="muted limitnote">Sign in to your Mistral web account to see your budget and usage limits here.</p>
-                  <button className="wide" disabled={webBusy} onClick={() => void webSignIn()}>{webBusy ? 'Waiting for the sign-in window…' : 'Sign in for budget'}</button>
+                  <div className="poprow"><span>Usage</span><span className="muted">{formatUsage(info.budget.usagePercent)}</span></div>
+                  <div className="meter" role="meter" aria-label="Usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(info.budget.usagePercent)}><span style={{ width: `${Math.min(100, info.budget.usagePercent)}%` }} /></div>
+                  <div className="poprow"><span>Budget</span><span className="muted">{formatBudget(info.budget)}</span></div>
+                  {info.budget.resetAt && <div className="poprow"><span>Resets</span><span className="muted">{new Date(info.budget.resetAt).toLocaleDateString()}</span></div>}
                 </div>
+              ) : (
+                <div className="popsection"><p className="muted limitnote">Signed in to Le Chat, but no budget data came back.</p></div>
               )}
             </>
+          ) : (
+            <div className="popsection">
+              <h4>Le Chat</h4>
+              <p className="muted limitnote">Sign in to see your name, organisation and budget here.</p>
+              <button className="wide" disabled={webBusy} onClick={() => void webSignIn()}>{webBusy ? 'Waiting for the sign-in window…' : 'Sign in: Le Chat'}</button>
+            </div>
           )}
+
           <div className="popsection links">
-            {info.webSignedIn && <button className="linklike" onClick={async () => setInfo(await window.api.account.webSignOut())}>Sign out of web account</button>}
+            {info.webSignedIn && <button className="linklike" onClick={async () => setInfo(await window.api.account.webSignOut())}>Sign out: Le Chat</button>}
             <a href="https://console.mistral.ai/" target="_blank" rel="noreferrer">Manage account and billing ↗</a>
-            <button className="linklike" onClick={() => { setOpen(false); onSettings() }}>Settings</button>
+            <button className="linklike" onClick={settingsLink}>Settings</button>
           </div>
         </div>
       )}
       <button className="accountbtn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="avatar" aria-hidden="true">{initial}</span>
-        <span className="who"><span className="whoname">{ready ? name : ''}</span>{plan && signedIn && <span className="muted whoplan">{plan}</span>}</span>
+        <span className="who"><span className="whoname">{ready ? name : ''}</span>{subtitle && <span className="muted whoplan">{subtitle}</span>}</span>
       </button>
     </div>
   )

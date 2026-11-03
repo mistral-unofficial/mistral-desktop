@@ -35,6 +35,8 @@ export function App() {
   }, [showSettings])
 
   const pick = (t: SidebarTab): void => setTab(t)
+  // Cmd+, (Ctrl+, elsewhere) comes from the app menu.
+  useEffect(() => window.api.app.onOpenSettings(() => setShowSettings(true)), [])
   useEffect(() => {
     if (!showSettings) return
     const onKey = (e: KeyboardEvent): void => {

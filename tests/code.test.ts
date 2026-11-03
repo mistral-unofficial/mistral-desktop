@@ -247,6 +247,32 @@ describe('CodeService with a fake ACP agent', () => {
     if (started.status === 'ready') svc.stop(started.id)
   })
 
+  it('exposes model and thinking as select options and changes them on the open session', async () => {
+    const { svc, waitFor } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    const byId = Object.fromEntries(r.configOptions.map((o) => [o.id, o]))
+    expect(r.configOptions.map((o) => o.id)).toEqual(['mode', 'model', 'thinking']) // the toggle is dropped
+    expect(byId.model).toMatchObject({ value: 'fast-model', category: 'model' })
+    expect(byId.model!.choices).toEqual([{ value: 'fast-model', name: 'Fast', description: undefined }, { value: 'big-model', name: 'Big', description: 'Slower, smarter' }])
+    expect(byId.thinking!.choices.map((c) => c.value)).toEqual(['off', 'high']) // grouped choices are flattened
+    const changed = await svc.setConfigOption(r.id, 'model', 'big-model')
+    expect(changed.ok && changed.options.find((o) => o.id === 'model')?.value).toBe('big-model')
+    expect(await svc.setConfigOption(r.id, 'model', 'nope')).toMatchObject({ ok: false })
+    expect(await svc.setConfigOption('missing', 'model', 'big-model')).toEqual({ ok: false, error: 'Session is not ready' })
+    void waitFor
+    svc.stop(r.id)
+  })
+
+  it('refuses to change a setting while a turn is running', async () => {
+    const { svc } = service('slowturn')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    svc.prompt(r.id, 'work')
+    expect(await svc.setConfigOption(r.id, 'model', 'big-model')).toEqual({ ok: false, error: 'Wait for the current turn to finish first' })
+    svc.stop(r.id)
+  })
+
   it('rejects a path that is not a folder', async () => {
     const { svc } = service('normal')
     expect(await svc.start('/definitely/not/here')).toMatchObject({ status: 'error' })

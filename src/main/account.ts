@@ -117,15 +117,11 @@ export class AccountService {
    * a custom API base URL.
    */
   refresh(key: string | undefined, apiBase = 'https://api.mistral.ai/v1'): Promise<AccountInfo> {
-    if (!key) {
-      this.clear()
-      return Promise.resolve({})
-    }
     this.inflight ??= this.load(key, apiBase).finally(() => (this.inflight = undefined))
     return this.inflight
   }
 
-  private async load(key: string, apiBase: string): Promise<AccountInfo> {
+  private async load(key: string | undefined, apiBase: string): Promise<AccountInfo> {
     const official = (() => {
       try {
         const h = new URL(apiBase).hostname
@@ -134,7 +130,8 @@ export class AccountService {
         return false
       }
     })()
-    const [plan, web] = await Promise.all([official ? this.fetchPlan(key) : Promise.resolve(undefined), this.fetchWeb()])
+    // The plan needs the API key; name, organisation and budget need the Le Chat web login. Each works without the other.
+    const [plan, web] = await Promise.all([official && key ? this.fetchPlan(key) : Promise.resolve(undefined), this.fetchWeb()])
     const info: AccountInfo = { plan, ...web }
     this.store(info)
     return info
@@ -142,7 +139,6 @@ export class AccountService {
 
   /** Answers at once from what is remembered and refreshes in the background; waits only when nothing is known. */
   get(key: string | undefined, apiBase?: string): Promise<AccountInfo> {
-    if (!key) return this.refresh(undefined)
     const known = this.cache
     const fresh = this.refresh(key, apiBase)
     return known ? Promise.resolve(known) : fresh

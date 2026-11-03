@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { BrowserSignInResult, CodeEvent, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
+import type { BrowserSignInResult, CodeConfigResult, CodeEvent, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
 import type { SettingsStore } from '../settings'
 import { readVibeApiKey } from '../vibe-credentials'
 import { AcpClient, AcpError, type AcpAuthMethod } from './acp-client'
+import { normalizeConfigOptions } from '../../shared/config-options'
 import { createWorktree, describeWorktree, removeWorktree } from './git-worktree'
 import { augmentedPath, vibeSearchDirs } from './paths'
 
@@ -116,7 +117,7 @@ export class CodeService {
       const res = await sess.client.newSession(sess.cwd, await this.getServers())
       sess.acpSessionId = res.sessionId
       const modes: CodeMode[] = res.modes?.availableModes ?? []
-      return { status: 'ready', id, modes, currentMode: res.modes?.currentModeId ?? '', canResume: sess.canList && sess.canLoad, sessionId: res.sessionId }
+      return { status: 'ready', id, modes, currentMode: res.modes?.currentModeId ?? '', canResume: sess.canList && sess.canLoad, sessionId: res.sessionId, configOptions: normalizeConfigOptions(res.configOptions) }
     } catch (e) {
       const msg = (e as Error).message
       if (sess.authMethods.length && e instanceof AcpError) {
@@ -310,7 +311,7 @@ export class CodeService {
       const history = sess.replay
       sess.acpSessionId = sessionId
       if (previous && previous !== sessionId && sess.canClose) void sess.client.closeSession(previous).catch(() => undefined)
-      return { status: 'ready', modes: res.modes?.availableModes ?? [], currentMode: res.modes?.currentModeId ?? '', history }
+      return { status: 'ready', modes: res.modes?.availableModes ?? [], currentMode: res.modes?.currentModeId ?? '', configOptions: normalizeConfigOptions(res.configOptions), history }
     } catch (e) {
       return { status: 'error', message: (e as Error).message }
     } finally {
@@ -340,6 +341,19 @@ export class CodeService {
     for (const respond of sess.perms.values()) respond(null)
     sess.perms.clear()
     sess.client.cancel(sess.acpSessionId)
+  }
+
+  /** Changes a session setting such as the model or thinking level. Not while a turn is running. */
+  async setConfigOption(id: string, configId: string, value: string): Promise<CodeConfigResult> {
+    const sess = this.sessions.get(id)
+    if (!sess?.acpSessionId) return { ok: false, error: 'Session is not ready' }
+    if (sess.busy) return { ok: false, error: 'Wait for the current turn to finish first' }
+    try {
+      const r = await sess.client.setConfigOption(sess.acpSessionId, configId, value)
+      return { ok: true, options: normalizeConfigOptions(r?.configOptions) }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
   }
 
   async setMode(id: string, modeId: string): Promise<void> {

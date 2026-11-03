@@ -40,8 +40,7 @@ export interface SettingsView extends Settings {
   insecureKeyStorage: boolean
 }
 
-/** `web` tells whether the app also holds a chat.mistral.ai session afterwards (needed for the budget). */
-export type BrowserSignInResult = { ok: true; web?: boolean } | { ok: false; error: string }
+export type BrowserSignInResult = { ok: true } | { ok: false; error: string }
 
 /** Who is signed in on the website. */
 export interface AccountProfile {
@@ -198,9 +197,20 @@ export interface CodeMode {
 }
 
 export type CodeStartResult =
-  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string; canResume: boolean; /** The agent's id for this (new, still empty) session. */ sessionId: string }
+  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string; canResume: boolean; /** The agent's id for this (new, still empty) session. */ sessionId: string; configOptions: CodeConfigOption[] }
   | { status: 'needs-auth'; id: string; authMethods: { id: string; name: string; description?: string }[]; message: string }
   | { status: 'error'; message: string }
+
+/** A session setting the agent lets the user change, e.g. the model or the thinking level. */
+export interface CodeConfigOption {
+  id: string
+  name: string
+  category?: string
+  value: string
+  choices: { value: string; name: string; description?: string }[]
+}
+
+export type CodeConfigResult = { ok: true; options: CodeConfigOption[] } | { ok: false; error: string }
 
 export interface PermissionOption {
   optionId: string
@@ -235,5 +245,5 @@ export type WorktreeRemoveResult = { ok: true } | { ok: false; error: string; di
 
 /** Result of resuming a stored session; `history` is the replayed `session/update` stream. */
 export type CodeResumeResult =
-  | { status: 'ready'; modes: CodeMode[]; currentMode: string; history: (Record<string, unknown> & { sessionUpdate: string })[] }
+  | { status: 'ready'; modes: CodeMode[]; currentMode: string; configOptions: CodeConfigOption[]; history: (Record<string, unknown> & { sessionUpdate: string })[] }
   | { status: 'error'; message: string }

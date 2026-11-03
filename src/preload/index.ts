@@ -55,6 +55,9 @@ const api: Api = {
     uninstall: (id) => inv('ext:uninstall', id),
     onChange: (cb) => sub<[InstalledExtension[]]>('ext:changed', cb)
   },
+  app: {
+    onOpenSettings: (cb) => sub<[]>('app:openSettings', cb)
+  },
   dialog: {
     pickPath: (kind) => inv('dialog:pickPath', kind)
   },
@@ -70,6 +73,7 @@ const api: Api = {
     listSessions: (id) => inv('code:listSessions', id),
     resume: (id, sid) => inv('code:resume', id, sid),
     workspaces: () => inv('code:workspaces'),
+    setConfigOption: (id, configId, value) => inv('code:setConfig', id, configId, value),
     createWorktree: (folder, branch) => inv('code:createWorktree', folder, branch),
     removeWorktree: (folder, force) => inv('code:removeWorktree', folder, force),
     renameSession: (sid, title) => inv('code:renameSession', sid, title),

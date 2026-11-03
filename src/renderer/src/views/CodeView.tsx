@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption } from '@shared/types'
+import type { CodeConfigOption, CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption } from '@shared/types'
+import { normalizeConfigOptions } from '@shared/config-options'
 import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
 import { Collapsible, Diff, Markdown, PlainText } from '../components'
 import { mergePending, type PendingSession } from '../sessions'
@@ -24,13 +25,11 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const [auth, setAuth] = useState<{ id: string; methods: { id: string; name: string }[] }>()
   const [modes, setModes] = useState<CodeMode[]>([])
   const [mode, setMode] = useState('')
+  const [configOptions, setConfigOptions] = useState<CodeConfigOption[]>([])
   const [state, setState] = useState<CodeState>({ items: [] })
   const [busy, setBusy] = useState(false)
   const [perms, setPerms] = useState<Perm[]>([])
   const [input, setInput] = useState('')
-  const [canResume, setCanResume] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
-  const [sessions, setSessions] = useState<CodeSessionInfo[] | null>(null)
   const idRef = useRef<string | undefined>(undefined)
   const buffered = useRef(new Map<string, CodeEvent[]>())
   const bottom = useRef<HTMLDivElement>(null)
@@ -39,6 +38,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     switch (e.type) {
       case 'update':
         setState((s) => applyCodeUpdate(s, e.update))
+        if (e.update.sessionUpdate === 'config_option_update') setConfigOptions(normalizeConfigOptions(e.update.configOptions))
         if (e.update.sessionUpdate === 'current_mode_update' && typeof e.update.currentModeId === 'string') setMode(e.update.currentModeId)
         break
       case 'permission': setPerms((p) => [...p, { requestId: e.requestId, title: e.title, options: e.options }]); break
@@ -75,7 +75,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const adopt = (r: CodeStartResult): void => {
     if (r.status === 'ready') {
       idRef.current = r.id
-      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setCanResume(r.canResume); setShowHistory(false); setSessions(null); setActiveSessionId(r.sessionId)
+      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setActiveSessionId(r.sessionId); setConfigOptions(r.configOptions)
       for (const e of buffered.current.get(r.id) ?? []) handle(e)
       buffered.current.delete(r.id)
       void refreshWorkspaces()
@@ -115,25 +115,12 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     setInput(''); setBusy(true)
     void window.api.code.prompt(idRef.current, text)
   }
-  const toggleHistory = async (): Promise<void> => {
-    const open = !showHistory
-    setShowHistory(open)
-    if (open && idRef.current) {
-      setSessions(null)
-      setSessions(await window.api.code.listSessions(idRef.current))
-    }
-  }
   const load = async (id: string, sessionId: string): Promise<void> => {
     const r = await window.api.code.resume(id, sessionId)
     if (r.status === 'ready') {
       setState({ ...replayHistory(r.history), mode: r.currentMode })
-      setModes(r.modes); setMode(r.currentMode); setPerms([]); setBusy(false); setActiveSessionId(sessionId)
+      setModes(r.modes); setMode(r.currentMode); setConfigOptions(r.configOptions); setPerms([]); setBusy(false); setActiveSessionId(sessionId)
     } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
-  }
-  const resume = async (sessionId: string): Promise<void> => {
-    if (!idRef.current || busy) return
-    setShowHistory(false)
-    await load(idRef.current, sessionId)
   }
   const shown = useMemo(() => mergePending(workspaces, pending), [workspaces, pending])
   // Once Vibe lists a session, the local stand-in is no longer needed.
@@ -209,6 +196,17 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const matches = shown
     .map((w) => ({ ...w, sessions: w.sessions.filter((x) => !query.trim() || (x.title + ' ' + w.path).toLowerCase().includes(query.trim().toLowerCase())) }))
     .filter((w) => !query.trim() || w.sessions.length || w.path.toLowerCase().includes(query.trim().toLowerCase()))
+  const changeConfig = async (configId: string, value: string): Promise<void> => {
+    if (!idRef.current) return
+    const before = configOptions
+    setConfigOptions((o) => o.map((x) => (x.id === configId ? { ...x, value } : x))) // show the choice at once
+    const r = await window.api.code.setConfigOption(idRef.current, configId, value)
+    if (r.ok) setConfigOptions(r.options)
+    else {
+      setConfigOptions(before)
+      setState((st) => ({ ...st, items: [...st.items, { kind: 'error', text: `Could not change ${configId}: ${r.error}` }] }))
+    }
+  }
   const answer = (p: Perm, optionId: string | null): void => {
     setPerms((ps) => ps.filter((x) => x.requestId !== p.requestId))
     void window.api.code.respondPermission(idRef.current!, p.requestId, optionId)
@@ -290,9 +288,19 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     {worktreeDialog}
     <div className="content">
       <header className="bar">
-        <span className="folder" title={folder}>📁 {folder}</span>
-        <button onClick={() => void choose()}>Change…</button>
-        {status === 'ready' && canResume && <button onClick={() => void toggleHistory()} disabled={busy} aria-expanded={showHistory}>History</button>}
+        {status === 'ready' && (['model', 'thinking'] as const).map((id) => {
+          const o = configOptions.find((x) => x.id === id)
+          if (!o || !o.choices.length) return null
+          const only = o.choices.length === 1
+          return (
+            <label key={id}>{o.name}{' '}
+              <select value={o.value} disabled={busy || only} title={only ? `Vibe offers only one ${o.name.toLowerCase()} here. More models can be added in Vibe's config.toml.` : o.choices.find((c) => c.value === o.value)?.description} onChange={(e) => void changeConfig(id, e.target.value)}>
+                {!o.choices.some((c) => c.value === o.value) && <option value={o.value}>{o.value}</option>}
+                {o.choices.map((c) => <option key={c.value} value={c.value} title={c.description}>{c.name}</option>)}
+              </select>
+            </label>
+          )
+        })}
         {status === 'ready' && modes.length > 0 && (
           <label>Mode{' '}
             <select value={mode} className={mode === 'auto-approve' ? 'warn' : ''} onChange={(e) => { setMode(e.target.value); void window.api.code.setMode(idRef.current!, e.target.value) }}>
@@ -300,21 +308,9 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
             </select>
           </label>
         )}
-        {state.usage && <span className="muted" title="Context used">{Math.round((100 * state.usage.used) / state.usage.size)}% context</span>}
+        {state.usage && <span className="muted ctx" title="Context used">{Math.round((100 * state.usage.used) / state.usage.size)}% context</span>}
       </header>
       {state.title && <div className="muted subtitle">{state.title}</div>}
-      {showHistory && (
-        <div className="history" role="region" aria-label="Previous sessions">
-          {sessions === null && <div className="muted">Loading…</div>}
-          {sessions?.length === 0 && <div className="muted">No earlier sessions in this folder.</div>}
-          {sessions?.map((s) => (
-            <button key={s.sessionId} className="historyitem" onClick={() => void resume(s.sessionId)}>
-              <span className="historytitle">{s.title}</span>
-              <span className="muted">{s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ''}</span>
-            </button>
-          ))}
-        </div>
-      )}
       {status === 'starting' && <div className="banner">{message || 'Starting Vibe…'}</div>}
       {status === 'needs-auth' && (
         <div className="banner">

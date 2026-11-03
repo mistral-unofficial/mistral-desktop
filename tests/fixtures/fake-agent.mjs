@@ -6,6 +6,13 @@ const w = (o) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...o }) +
 let authed = mode !== 'needsauth'
 let permResolve
 let current = 's1'
+const cfg = { model: 'fast-model', thinking: 'high' }
+const configOptions = () => [
+  { id: 'mode', name: 'Session Mode', type: 'select', currentValue: 'accept-edits', options: [{ value: 'ask', name: 'Ask' }, { value: 'accept-edits', name: 'Accept Edits' }] },
+  { id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: cfg.model, options: [{ value: 'fast-model', name: 'Fast' }, { value: 'big-model', name: 'Big', description: 'Slower, smarter' }] },
+  { id: 'thinking', name: 'Thinking', type: 'select', currentValue: cfg.thinking, options: [{ group: 'levels', name: 'Levels', options: [{ value: 'off', name: 'Off' }, { value: 'high', name: 'High' }] }] },
+  { id: 'flag', name: 'A toggle', type: 'boolean', currentValue: true }
+]
 let n1done = false // mode slowturn: the new session is listed only once its first turn has finished
 readline.createInterface({ input: process.stdin }).on('line', (l) => {
   const m = JSON.parse(l)
@@ -27,7 +34,7 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
     if (!authed) return w({ id: m.id, error: { code: -32000, message: 'Missing API key for mistral provider.' } })
     process.stderr.write('mcp:' + JSON.stringify(m.params.mcpServers) + '\n')
     w({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', messageId: 'n', content: { type: 'text', text: 'new-servers=' + JSON.stringify(m.params.mcpServers) } } } })
-    w({ id: m.id, result: { sessionId: mode === 'slowturn' ? 'n1' : 's1', modes: { currentModeId: 'accept-edits', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'accept-edits', name: 'Accept Edits' }] } } })
+    w({ id: m.id, result: { sessionId: mode === 'slowturn' ? 'n1' : 's1', modes: { currentModeId: 'accept-edits', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'accept-edits', name: 'Accept Edits' }] }, configOptions: configOptions() } })
   } else if (m.method === '_session/set_title') {
     process.stderr.write('renamed:' + m.params.sessionId + ':' + m.params.title + '\n')
     if (m.params.sessionId === 'missing') return w({ id: m.id, error: { code: -32602, message: 'Session not found' } })
@@ -48,9 +55,16 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
     upd({ sessionUpdate: 'agent_message_chunk', messageId: 'a1', content: { type: 'text', text: 'earlier answer' } })
     upd({ sessionUpdate: 'agent_message_chunk', messageId: 'a2', content: { type: 'text', text: 'load-servers=' + JSON.stringify(m.params.mcpServers) } })
     current = 'old-1'
-    w({ id: m.id, result: { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }] } } })
+    w({ id: m.id, result: { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }] }, configOptions: configOptions() } })
   } else if (m.method === 'session/close') {
     w({ id: m.id, result: {} })
+  } else if (m.method === 'session/set_config_option') {
+    const { configId, value } = m.params
+    const allowed = { model: ['fast-model', 'big-model'], thinking: ['off', 'high'] }
+    if (!allowed[configId]?.includes(value)) return w({ id: m.id, error: { code: -32602, message: `Unsupported config option ${configId}=${JSON.stringify(value)}` } })
+    cfg[configId] = value
+    process.stderr.write('config:' + configId + '=' + value + '\n')
+    w({ id: m.id, result: { configOptions: configOptions() } })
   } else if (m.method === 'session/set_mode') {
     w({ id: m.id, result: {} })
   } else if (m.method === 'session/prompt') {

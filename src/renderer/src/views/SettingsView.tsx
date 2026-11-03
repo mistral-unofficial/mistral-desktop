@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { McpServerConfig, McpServerStatus, SettingsView as SV } from '@shared/types'
+import type { AccountInfo, McpServerConfig, McpServerStatus, SettingsView as SV } from '@shared/types'
 import { argsToText, envToText, headersToText, parseMcpJson, textToArgs, textToEnv, textToHeaders } from '../mcpImport'
 import { ExtensionsSection } from './ExtensionsSection'
 
@@ -11,12 +11,17 @@ export function SettingsView() {
   const [note, setNote] = useState('')
   const [signingIn, setSigningIn] = useState(false)
   const [signInError, setSignInError] = useState('')
-  const [signInOk, setSignInOk] = useState<{ web?: boolean }>()
+  const [signInOk, setSignInOk] = useState(false)
+  const [account, setAccount] = useState<AccountInfo>({})
+  const [chatBusy, setChatBusy] = useState(false)
 
   useEffect(() => {
     void window.api.settings.get().then(setS)
     void window.api.mcp.status().then(setStatus)
-    return window.api.mcp.onChange(setStatus)
+    void window.api.account.get().then(setAccount)
+    const offAccount = window.api.account.onUpdate(setAccount)
+    const offMcp = window.api.mcp.onChange(setStatus)
+    return () => { offAccount(); offMcp() }
   }, [])
   if (!s) return <div className="center muted">Loading…</div>
 
@@ -25,15 +30,22 @@ export function SettingsView() {
   const edit = (id: string, p: Partial<McpServerConfig>): Promise<void> => setServers(s.mcpServers.map((m) => (m.id === id ? { ...m, ...p } : m)))
   const stat = (id: string): McpServerStatus | undefined => status.find((x) => x.id === id)
 
+  // "Sign in: Vibe Code": creates the API key used by Code and Chat.
   const signIn = async (): Promise<void> => {
     setSigningIn(true)
     setSignInError('')
-    setSignInOk(undefined)
+    setSignInOk(false)
     const r = await window.api.settings.signInWithBrowser()
-    if (r.ok) setSignInOk({ web: r.web })
+    if (r.ok) setSignInOk(true)
     else setSignInError(r.error)
     setS(await window.api.settings.get())
     setSigningIn(false)
+  }
+  // "Sign in: Le Chat": your Le Chat web account, for name, organisation and budget.
+  const signInChat = async (): Promise<void> => {
+    setChatBusy(true)
+    setAccount(await window.api.account.webSignIn())
+    setChatBusy(false)
   }
 
   const doImport = async (): Promise<void> => {
@@ -54,21 +66,39 @@ export function SettingsView() {
       <h2>Settings</h2>
 
       <section>
-        <h3>Mistral API key</h3>
-        <p className="muted">Used for Chat and passed to Vibe for Code. Create one at console.mistral.ai. {s.hasApiKey ? '✓ A key is set.' : 'No key set.'}</p>
+        <h3>Le Chat</h3>
+        <p className="muted">Your Le Chat web account. Shows your name, organisation and budget in the sidebar. It does not give the app access to the Mistral API; that is what Vibe Code below is for.</p>
+        <div className="row">
+          {account.webSignedIn ? (
+            <>
+              <span className="okline">✓ Signed in{account.profile?.name ? ` as ${account.profile.name}` : ''}{account.profile?.organization ? ` · ${account.profile.organization}` : ''}</span>
+              <button onClick={async () => setAccount(await window.api.account.webSignOut())}>Sign out: Le Chat</button>
+            </>
+          ) : (
+            <>
+              <button className="primary" disabled={chatBusy} onClick={() => void signInChat()}>{chatBusy ? 'Waiting for the sign-in window…' : 'Sign in: Le Chat'}</button>
+              <span className="muted">Opens chat.mistral.ai in a window of this app.</span>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <h3>Vibe Code</h3>
+        <p className="muted">Creates a Mistral API key for your workspace. The Code tab (Vibe) and the Chat tab both use it. Or paste a key you made at console.mistral.ai. {s.hasApiKey ? '✓ A key is set.' : 'No key set.'}</p>
         {s.insecureKeyStorage && <p className="warnline">No OS keychain available: the key is stored in a file readable only by your user.</p>}
         <div className="row">
-          <button className="primary" disabled={signingIn} onClick={() => void signIn()}>{signingIn ? 'Waiting for the browser…' : 'Sign in with Mistral'}</button>
-          <span className="muted">Opens your browser; no key to copy. Needs Vibe installed.</span>
+          <button className="primary" disabled={signingIn} onClick={() => void signIn()}>{signingIn ? 'Waiting for the sign-in window…' : 'Sign in: Vibe Code'}</button>
+          {s.hasApiKey && <button title="Removes the API key kept by this app. Le Chat stays signed in, and so does Vibe's own stored sign-in." onClick={async () => { setSignInOk(false); setS(await window.api.settings.signOut()) }}>Sign out: Vibe Code</button>}
+          <span className="muted">Needs Vibe installed.</span>
         </div>
         {signInError && <p className="warnline">{signInError}</p>}
-        {signInOk && !signingIn && <p className="okline" role="status">✓ Signed in. Chat and Code now use your Mistral account.{signInOk.web === false && <span className="muted"> The web account (for budget) was not signed in; you can do that from the account menu.</span>}</p>}
+        {signInOk && !signingIn && <p className="okline" role="status">✓ Signed in. The Code and Chat tabs now use your key.</p>}
         <div className="row">
-          <input type="password" autoComplete="off" value={key} placeholder={s.hasApiKey ? '•••••••• (enter a new key to replace)' : 'Paste API key'} onChange={(e) => setKey(e.target.value)} />
-          <button className="primary" disabled={!key.trim()} onClick={async () => { setS(await window.api.settings.setApiKey(key)); setKey('') }}>Save</button>
-          {s.hasApiKey && <button title="Removes the API key and the web login kept by this app. Vibe's own stored sign-in is left alone." onClick={async () => { setSignInOk(undefined); setS(await window.api.settings.signOut()) }}>Sign out</button>}
+          <input type="password" autoComplete="off" value={key} placeholder={s.hasApiKey ? '•••••••• (enter a new key to replace)' : 'Or paste an API key'} onChange={(e) => setKey(e.target.value)} />
+          <button disabled={!key.trim()} onClick={async () => { setS(await window.api.settings.setApiKey(key)); setKey('') }}>Save</button>
         </div>
-        <p className="muted">Browser sign-in uses Vibe's flow, which creates an API key for your Mistral workspace and saves it here. Chat and Code then both use it.</p>
+        <p className="muted">Both sign-ins use the same Mistral login, so if you are signed in to one, the other may finish without asking again.</p>
       </section>
 
       <section>

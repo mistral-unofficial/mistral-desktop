@@ -30,7 +30,12 @@ describe('account', () => {
     expect(info.webSignedIn).toBe(true)
     expect(info.budget?.initialBudget).toBe(8.5)
     expect(info.profile).toEqual({ name: 'Wolf', email: undefined, organization: 'Acme' })
-    expect(await new AccountService(f, web).get(undefined)).toEqual({})
+    // Le Chat works without an API key: name, organisation and budget still come through, only the plan is missing.
+    const noKey = await new AccountService(f, web).get(undefined)
+    expect(noKey.plan).toBeUndefined()
+    expect(noKey.profile?.name).toBe('Wolf')
+    expect(noKey.budget?.initialBudget).toBe(8.5)
+    expect(await new AccountService(f).get(undefined)).toEqual({ plan: undefined })
   })
 
   it('has no budget without a web session', async () => {
@@ -83,7 +88,7 @@ describe('account cache and refresh', () => {
     expect(calls).toBe(2) // one budget and one session query, not three of each
     a.clear()
     expect(a.cached()).toBeUndefined()
-    expect(await a.refresh(undefined)).toEqual({})
+    expect((await a.refresh(undefined)).plan).toBeUndefined()
   })
 })
 

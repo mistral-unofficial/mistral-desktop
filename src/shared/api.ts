@@ -1,4 +1,4 @@
-import type { AccountInfo, BrowserSignInResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorktreeCreateResult, WorktreeRemoveResult } from './types'
+import type { AccountInfo, BrowserSignInResult, CodeConfigResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorktreeCreateResult, WorktreeRemoveResult } from './types'
 
 /** The API exposed on `window.api` by the preload script. */
 export interface Api {
@@ -56,6 +56,10 @@ export interface Api {
     uninstall(id: string): Promise<void>
     onChange(cb: (list: InstalledExtension[]) => void): () => void
   }
+  app: {
+    /** Fired when the user chooses Settings… in the app menu (Cmd+, on macOS, Ctrl+, elsewhere). */
+    onOpenSettings(cb: () => void): () => void
+  }
   dialog: {
     pickPath(kind: 'file' | 'directory'): Promise<string | undefined>
   }
@@ -77,6 +81,8 @@ export interface Api {
     createWorktree(folder: string, branch: string): Promise<WorktreeCreateResult>
     /** Removes a linked worktree (the branch is kept). Without `force` it refuses when there are uncommitted changes. */
     removeWorktree(folder: string, force: boolean): Promise<WorktreeRemoveResult>
+    /** Changes a session setting such as `model` or `thinking`; resolves to the updated option list. */
+    setConfigOption(id: string, configId: string, value: string): Promise<CodeConfigResult>
     renameSession(sessionId: string, title: string): Promise<string | undefined>
     /** Deletes a stored session through Vibe (the open one is stopped too). Resolves to an error message, or undefined. */
     deleteSession(sessionId: string): Promise<string | undefined>

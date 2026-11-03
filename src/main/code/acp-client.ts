@@ -138,7 +138,7 @@ export class AcpClient extends EventEmitter {
     return this.request('authenticate', { methodId, ...extra })
   }
 
-  newSession(cwd: string, mcpServers: unknown[]): Promise<{ sessionId: string; modes?: AcpModes }> {
+  newSession(cwd: string, mcpServers: unknown[]): Promise<{ sessionId: string; modes?: AcpModes; configOptions?: unknown }> {
     return this.request('session/new', { cwd, mcpServers })
   }
 
@@ -147,8 +147,13 @@ export class AcpClient extends EventEmitter {
   }
 
   /** Replays the stored conversation as session/update notifications before resolving. */
-  loadSession(sessionId: string, cwd: string, mcpServers: unknown[]): Promise<{ modes?: AcpModes }> {
+  loadSession(sessionId: string, cwd: string, mcpServers: unknown[]): Promise<{ modes?: AcpModes; configOptions?: unknown }> {
     return this.request('session/load', { sessionId, cwd, mcpServers })
+  }
+
+  /** Changes a session setting (`model`, `thinking`, ...) and returns the updated option list. */
+  setConfigOption(sessionId: string, configId: string, value: string): Promise<{ configOptions?: unknown }> {
+    return this.request('session/set_config_option', { sessionId, configId, value })
   }
 
   /** Vibe extension methods (JSON-RPC names start with an underscore). */

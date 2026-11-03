@@ -1,4 +1,4 @@
-import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { BrowserWindow, Menu, app, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type { ChatEvent, Conversation, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
@@ -41,6 +41,21 @@ function createWindow(): void {
   })
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
+}
+
+/** Application menu: the standard menus plus Settings… (Cmd+, on macOS, Ctrl+, elsewhere), which the window opens as its Settings dialog. */
+function buildAppMenu(openSettings: () => void): Menu {
+  const settingsItem: Electron.MenuItemConstructorOptions = { id: 'settings', label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings }
+  const mac = process.platform === 'darwin'
+  return Menu.buildFromTemplate([
+    ...(mac
+      ? [{ label: app.name, submenu: [{ role: 'about' }, { type: 'separator' }, settingsItem, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] } as Electron.MenuItemConstructorOptions]
+      : []),
+    { label: 'File', submenu: [...(mac ? [] : [settingsItem, { type: 'separator' } as Electron.MenuItemConstructorOptions]), mac ? { role: 'close' } : { role: 'quit' }] },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  ])
 }
 
 app.whenReady().then(async () => {
@@ -101,17 +116,18 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('settings:setApiKey', async (_e, key: string) => (await settings.setApiKey(key), void account.refresh(await settings.getApiKey(), settings.get().apiBase), settings.view()))
   ipcMain.handle('settings:clearApiKey', async () => (settings.clearApiKey(), settings.view()))
-  // Forgets the app's API key and the web login. Vibe's own stored sign-in (used by the `vibe` command) is left alone.
-  ipcMain.handle('settings:signOut', async () => (settings.clearApiKey(), await web.signOut(), account.clear(), settings.view()))
-  // One sign-in for everything: Vibe mints the API key via the console login, then, if the app has no chat.mistral.ai
-  // session yet (a separate login), the same kind of window continues there. Skipping or closing that part still
-  // leaves the key signed in; only the budget is missing.
+  // "Sign in: Vibe Code": Vibe's browser sign-in creates the API key used by Code and Chat. Independent of Le Chat.
   ipcMain.handle('settings:signInWithBrowser', async () => {
     const r = await code.signInWithBrowser(web)
-    if (!r.ok) return r
-    if (!(await web.signedIn())) await web.signInInWindow('https://chat.mistral.ai/code')
     void account.refresh(await settings.getApiKey(), settings.get().apiBase)
-    return { ok: true as const, web: await web.signedIn() }
+    return r
+  })
+  // Signing out of Vibe Code forgets the app's API key only. Le Chat (name, organisation, budget) stays signed in, and
+  // so does Vibe's own stored sign-in used by the `vibe` command.
+  ipcMain.handle('settings:signOut', async () => {
+    settings.clearApiKey()
+    void account.refresh(undefined)
+    return settings.view()
   })
 
   // ---- account ----
@@ -121,6 +137,7 @@ app.whenReady().then(async () => {
     await web.signInInWindow('https://chat.mistral.ai/code')
     return account.refresh(await settings.getApiKey(), settings.get().apiBase)
   })
+  // "Sign out: Le Chat": forgets the web login (and so name, organisation and budget). The API key stays.
   ipcMain.handle('account:webSignOut', async () => (await web.signOut(), account.clear(), account.refresh(await settings.getApiKey(), settings.get().apiBase)))
   // Start loading right away so the name and plan are ready by the time the sidebar asks.
   void account.refresh(await settings.getApiKey(), settings.get().apiBase)
@@ -227,6 +244,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
   ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))
   ipcMain.handle('code:workspaces', () => code.listWorkspaces())
+  ipcMain.handle('code:setConfig', (_e, id: string, configId: string, value: string) => code.setConfigOption(id, configId, value))
   ipcMain.handle('code:createWorktree', (_e, folder: string, branch: string) => code.createWorktree(folder, branch))
   ipcMain.handle('code:removeWorktree', (_e, folder: string, force: boolean) => code.removeWorktree(folder, force))
   ipcMain.handle('code:renameSession', (_e, sid: string, title: string) => code.renameSession(sid, title))
@@ -237,6 +255,7 @@ app.whenReady().then(async () => {
     code.stopAll()
     void mcp.shutdown()
   })
+  Menu.setApplicationMenu(buildAppMenu(() => send('app:openSettings')))
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })
