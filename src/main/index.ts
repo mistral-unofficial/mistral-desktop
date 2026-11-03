@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
   }
   const web = new WebSession(() => win)
   const account = new AccountService(fetch, web, join(dir, 'account-cache.json'), (info) => send('account:update', info))
-  const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), async (id) => mcp.accessToken(id)))
+  const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), async (id) => mcp.accessToken(id)), undefined, join(dir, 'worktrees'))
   resync()
 
   // ---- settings ----
@@ -227,6 +227,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
   ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))
   ipcMain.handle('code:workspaces', () => code.listWorkspaces())
+  ipcMain.handle('code:createWorktree', (_e, folder: string, branch: string) => code.createWorktree(folder, branch))
+  ipcMain.handle('code:removeWorktree', (_e, folder: string, force: boolean) => code.removeWorktree(folder, force))
   ipcMain.handle('code:renameSession', (_e, sid: string, title: string) => code.renameSession(sid, title))
   ipcMain.handle('code:deleteSession', (_e, sid: string) => code.deleteSession(sid))
   ipcMain.handle('code:resume', (_e, id: string, sid: string) => code.resume(id, sid))

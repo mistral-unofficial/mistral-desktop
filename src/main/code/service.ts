@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
-import type { BrowserSignInResult, CodeEvent, CodeWorkspace, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
+import { join } from 'node:path'
+import type { BrowserSignInResult, CodeEvent, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
 import type { SettingsStore } from '../settings'
 import { readVibeApiKey } from '../vibe-credentials'
 import { AcpClient, AcpError, type AcpAuthMethod } from './acp-client'
+import { createWorktree, describeWorktree, removeWorktree } from './git-worktree'
+import { augmentedPath, vibeSearchDirs } from './paths'
 
 interface Session {
   client: AcpClient
@@ -23,19 +25,6 @@ interface Session {
 }
 
 export const VIBE_INSTALL_HINT = 'Vibe is not installed. Install it with `uv tool install mistral-vibe` (or `pip install mistral-vibe`), or set its path in Settings.'
-
-/** Directories where Vibe usually ends up. GUI apps do not inherit the shell PATH, so Homebrew etc. are not on it. */
-export function vibeSearchDirs(): string[] {
-  if (process.platform === 'win32') return [join(homedir(), '.local', 'bin')]
-  return [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin']
-}
-
-/** PATH for spawned agents: the inherited one plus the usual tool directories. */
-export function augmentedPath(base: string | undefined = process.env.PATH): string {
-  const parts = (base ?? '').split(delimiter).filter(Boolean)
-  for (const d of [...vibeSearchDirs(), '/opt/homebrew/sbin', '/usr/local/sbin']) if (!parts.includes(d)) parts.push(d)
-  return parts.join(delimiter)
-}
 
 export function resolveVibeCommand(configured: string): string {
   if (configured.trim()) return configured.trim()
@@ -73,7 +62,9 @@ export class CodeService {
     /** MCP servers (in ACP shape) to give each session: manual, remote and extension servers. */
     private getServers: () => Promise<unknown[]> = async () => [],
     /** Reads the key Vibe stored after sign-in. Replaceable so tests never touch the real keychain. */
-    private readKey: (vibeHome: string) => Promise<string | undefined> = readVibeApiKey
+    private readKey: (vibeHome: string) => Promise<string | undefined> = readVibeApiKey,
+    /** Where git worktrees created by the app live. */
+    private worktreesDir: string = join(homedir(), '.mistral-desktop', 'worktrees')
   ) {}
 
   async start(cwd: string): Promise<CodeStartResult> {
@@ -242,14 +233,33 @@ export class CodeService {
 
   private async readWorkspaces(): Promise<CodeWorkspace[]> {
     const folders = this.settings.get().recentFolders.filter((f) => existsSync(f))
-    const bare = folders.map((path) => ({ path, sessions: [] as CodeSessionInfo[] }))
+    const worktrees = await Promise.all(folders.map((f) => describeWorktree(f)))
+    const bare = folders.map((path, i) => ({ path, sessions: [] as CodeSessionInfo[], worktree: worktrees[i] }))
     if (!folders.length) return bare
     return this.withTempAgent(async (client, { canList }) => {
       if (!canList) return bare
       const out: CodeWorkspace[] = []
-      for (const path of folders) out.push({ path, sessions: await collectSessions(client, path).catch(() => []) })
+      for (const [i, path] of folders.entries()) out.push({ path, sessions: await collectSessions(client, path).catch(() => []), worktree: worktrees[i] })
       return out
     }, bare)
+  }
+
+  /** Creates a git worktree for `branch` next to the app's other data, and lists it as a workspace. */
+  async createWorktree(folder: string, branch: string): Promise<WorktreeCreateResult> {
+    const r = await createWorktree(folder, branch, this.worktreesDir)
+    if (r.ok) this.remember(r.path)
+    return r
+  }
+
+  /** Removes a linked worktree and forgets the workspace; sessions open in it are stopped. */
+  async removeWorktree(folder: string, force: boolean): Promise<WorktreeRemoveResult> {
+    const r = await removeWorktree(folder, force)
+    if (r.ok) {
+      // Only now that it is really gone: stop agents that were working in it.
+      for (const [id, s] of [...this.sessions.entries()]) if (s.cwd === folder) this.drop(id)
+      this.settings.update({ recentFolders: this.settings.get().recentFolders.filter((f) => f !== folder) })
+    }
+    return r
   }
 
   private liveSession(sessionId: string): [string, Session] | undefined {

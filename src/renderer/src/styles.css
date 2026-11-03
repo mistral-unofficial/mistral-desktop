@@ -186,3 +186,7 @@ select.warn { border-color: var(--warn); color: var(--warn); }
 .ctxmenu button:hover, .ctxmenu button:focus-visible { background: var(--bg3); outline: none; }
 .ctxmenu .danger-item { color: var(--err); }
 .wsrename { width: 100%; padding: 4px 6px; }
+.wtbadge { flex: none; font-size: 11px; font-weight: 500; color: var(--muted); background: var(--bg3); border-radius: 10px; padding: 1px 7px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal.prompt { flex-direction: column; gap: 10px; padding: 20px 22px; width: min(480px, 100%); height: auto; align-self: center; overflow: auto; }
+.modal.prompt h3 { margin: 0; }
+.modal.prompt p { margin: 0; }

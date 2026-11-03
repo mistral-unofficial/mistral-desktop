@@ -222,6 +222,31 @@ describe('CodeService with a fake ACP agent', () => {
     expect(events.some((e) => e.type === 'error')).toBe(true) // the session is gone
   })
 
+  it('creates and removes git worktrees as workspaces, and lists them with their branch', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const { writeFileSync, existsSync } = await import('node:fs')
+    const repo = tmp()
+    const g = (...a: string[]): string => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...a], { cwd: repo, encoding: 'utf8' })
+    g('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'f'), '1'); g('add', '.'); g('commit', '-q', '-m', 'i')
+    const base = tmp()
+    const { settings } = service('normal', { recentFolders: [repo] })
+    const svc = new CodeService(settings, () => undefined, async () => [], undefined, base)
+    const made = await svc.createWorktree(repo, 'feat/x')
+    if (!made.ok) throw new Error(made.error)
+    expect(settings.get().recentFolders[0]).toBe(made.path)
+    const ws = await svc.listWorkspaces()
+    expect(ws.find((w) => w.path === made.path)?.worktree?.branch).toBe('feat/x')
+    expect(ws.find((w) => w.path === repo)?.worktree).toBeUndefined()
+    const started = await svc.start(made.path) // a session can run inside the worktree
+    expect(started.status).toBe('ready')
+    writeFileSync(join(made.path, 'dirty'), 'x')
+    expect(await svc.removeWorktree(made.path, false)).toMatchObject({ ok: false, dirty: true })
+    expect(existsSync(made.path)).toBe(true)
+    expect(await svc.removeWorktree(made.path, true)).toEqual({ ok: true })
+    expect(settings.get().recentFolders).not.toContain(made.path)
+    if (started.status === 'ready') svc.stop(started.id)
+  })
+
   it('rejects a path that is not a folder', async () => {
     const { svc } = service('normal')
     expect(await svc.start('/definitely/not/here')).toMatchObject({ status: 'error' })

@@ -226,7 +226,12 @@ export interface CodeSessionInfo {
 export interface CodeWorkspace {
   path: string
   sessions: CodeSessionInfo[]
+  /** Set when the folder is a linked git worktree created for a branch. */
+  worktree?: { branch: string; mainRepo: string }
 }
+
+export type WorktreeCreateResult = { ok: true; path: string; branch: string } | { ok: false; error: string }
+export type WorktreeRemoveResult = { ok: true } | { ok: false; error: string; dirty?: boolean }
 
 /** Result of resuming a stored session; `history` is the replayed `session/update` stream. */
 export type CodeResumeResult =

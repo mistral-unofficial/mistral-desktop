@@ -16,12 +16,15 @@ interface Props {
   onOpen: (path: string, sessionId: string) => void
   onRename: (path: string, session: CodeSessionInfo, title: string) => void
   onDelete: (path: string, session: CodeSessionInfo) => void
+  onNewWorktree: (path: string) => void
+  onRemoveWorktree: (workspace: CodeWorkspace) => void
 }
 
-export function WorkspaceList({ workspaces, activeFolder, activeSessionId, variant, onNewSession, onOpen, onRename, onDelete }: Props) {
+export function WorkspaceList({ workspaces, activeFolder, activeSessionId, variant, onNewSession, onOpen, onRename, onDelete, onNewWorktree, onRemoveWorktree }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<{ x: number; y: number; path: string; session: CodeSessionInfo }>()
+  const [wsMenu, setWsMenu] = useState<{ x: number; y: number; ws: CodeWorkspace }>()
   const [editing, setEditing] = useState<{ id: string; text: string }>()
   const commit = (path: string, session: CodeSessionInfo): void => {
     const title = editing?.text.trim()
@@ -41,9 +44,10 @@ export function WorkspaceList({ workspaces, activeFolder, activeSessionId, varia
         const shown = all ? w.sessions : w.sessions.slice(0, SHOWN)
         return (
           <section key={w.path} className={w.path === activeFolder ? 'ws active' : 'ws'}>
-            <header className="wshead">
-              <button className="wsname" aria-expanded={open} title={w.path} onClick={() => flip(collapsed, setCollapsed, w.path)}>
-                <span className="wsname-text">{folderName(w.path)}</span>
+            <header className="wshead" onContextMenu={(e) => { e.preventDefault(); setWsMenu({ x: e.clientX, y: e.clientY, ws: w }) }}>
+              <button className="wsname" aria-expanded={open} title={w.worktree ? `${w.path}\nWorktree of ${w.worktree.mainRepo}` : w.path} onClick={() => flip(collapsed, setCollapsed, w.path)}>
+                <span className="wsname-text">{w.worktree ? folderName(w.worktree.mainRepo) : folderName(w.path)}</span>
+                {w.worktree && <span className="wtbadge" title="Git worktree"><span aria-hidden="true">⎇</span> {w.worktree.branch}</span>}
                 <span className="caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
               </button>
               <button className="iconbtn wsnew" aria-label={`New session in ${folderName(w.path)}`} title="New session" onClick={() => onNewSession(w.path)}>＋</button>
@@ -89,6 +93,18 @@ export function WorkspaceList({ workspaces, activeFolder, activeSessionId, varia
           </section>
         )
       })}
+      {wsMenu && (
+        <ContextMenu
+          x={wsMenu.x}
+          y={wsMenu.y}
+          onClose={() => setWsMenu(undefined)}
+          items={[
+            { label: 'New session', onSelect: () => onNewSession(wsMenu.ws.path) },
+            { label: 'New session in a new worktree…', onSelect: () => onNewWorktree(wsMenu.ws.path) },
+            ...(wsMenu.ws.worktree ? [{ label: 'Remove worktree…', danger: true, onSelect: () => onRemoveWorktree(wsMenu.ws) }] : [])
+          ]}
+        />
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}

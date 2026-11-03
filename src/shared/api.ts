@@ -1,4 +1,4 @@
-import type { AccountInfo, BrowserSignInResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue } from './types'
+import type { AccountInfo, BrowserSignInResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorktreeCreateResult, WorktreeRemoveResult } from './types'
 
 /** The API exposed on `window.api` by the preload script. */
 export interface Api {
@@ -73,6 +73,10 @@ export interface Api {
     workspaces(): Promise<CodeWorkspace[]>
     resume(id: string, sessionId: string): Promise<CodeResumeResult>
     /** Renames a stored session through Vibe. Resolves to an error message, or undefined on success. */
+    /** Creates a git worktree for `branch` of the repository containing `folder`; sessions can then be started in `path`. */
+    createWorktree(folder: string, branch: string): Promise<WorktreeCreateResult>
+    /** Removes a linked worktree (the branch is kept). Without `force` it refuses when there are uncommitted changes. */
+    removeWorktree(folder: string, force: boolean): Promise<WorktreeRemoveResult>
     renameSession(sessionId: string, title: string): Promise<string | undefined>
     /** Deletes a stored session through Vibe (the open one is stopped too). Resolves to an error message, or undefined. */
     deleteSession(sessionId: string): Promise<string | undefined>

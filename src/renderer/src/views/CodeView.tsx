@@ -16,6 +16,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   // Sessions the user has started that Vibe has not listed yet: shown in the sidebar from the first message on.
   const [pending, setPending] = useState<PendingSession[]>([])
   const [notice, setNotice] = useState('')
+  const [wtDialog, setWtDialog] = useState<{ path: string; branch: string; error: string; busy: boolean }>()
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<Status>('idle')
@@ -174,6 +175,37 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     void refreshWorkspaces()
   }
 
+  const openWorktreeDialog = (path: string): void => {
+    const d = new Date()
+    const p = (n: number): string => String(n).padStart(2, '0')
+    setWtDialog({ path, branch: `vibe/${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`, error: '', busy: false })
+  }
+  const createWorktree = async (): Promise<void> => {
+    if (!wtDialog || wtDialog.busy) return
+    setWtDialog({ ...wtDialog, busy: true, error: '' })
+    const r = await window.api.code.createWorktree(wtDialog.path, wtDialog.branch)
+    if (!r.ok) return setWtDialog((d) => d && { ...d, busy: false, error: r.error })
+    setWtDialog(undefined)
+    await begin(r.path)
+  }
+  const removeWorktree = async (ws: CodeWorkspace): Promise<void> => {
+    if (!ws.worktree) return
+    if (!window.confirm(`Remove the worktree for "${ws.worktree.branch}"?\n\n${ws.path}\n\nThe branch and its commits are kept.`)) return
+    setNotice('')
+    let r = await window.api.code.removeWorktree(ws.path, false)
+    if (!r.ok && r.dirty) {
+      if (!window.confirm(`"${ws.worktree.branch}" has uncommitted changes that will be lost. Remove it anyway?`)) return
+      r = await window.api.code.removeWorktree(ws.path, true)
+    }
+    if (!r.ok) return setNotice(`Could not remove the worktree: ${r.error}`)
+    if (folder === ws.path) {
+      idRef.current = undefined
+      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setBusy(false); setActiveSessionId(undefined)
+    }
+    setPending((p) => p.filter((x) => x.path !== ws.path))
+    void refreshWorkspaces()
+  }
+
   const matches = shown
     .map((w) => ({ ...w, sessions: w.sessions.filter((x) => !query.trim() || (x.title + ' ' + w.path).toLowerCase().includes(query.trim().toLowerCase())) }))
     .filter((w) => !query.trim() || w.sessions.length || w.path.toLowerCase().includes(query.trim().toLowerCase()))
@@ -190,9 +222,25 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg> Search
         </button>
       </div>
-      <WorkspaceList workspaces={shown} variant="side" activeFolder={folder} activeSessionId={activeSessionId} onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} />
+      <WorkspaceList workspaces={shown} variant="side" activeFolder={folder} activeSessionId={activeSessionId} onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} onNewWorktree={openWorktreeDialog} onRemoveWorktree={(w) => void removeWorktree(w)} />
       {notice && <p className="warnline" role="alert">{notice}</p>}
     </SidebarPortal>
+  )
+  const worktreeDialog = wtDialog && (
+    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !wtDialog.busy) setWtDialog(undefined) }}>
+      <form className="modal prompt" role="dialog" aria-modal="true" aria-label="New worktree" onSubmit={(e) => { e.preventDefault(); void createWorktree() }} onKeyDown={(e) => { if (e.key === 'Escape' && !wtDialog.busy) setWtDialog(undefined) }}>
+        <h3>New session in a new worktree</h3>
+        <p className="muted">Creates a separate git checkout of <strong>{folderName(workspaces.find((w) => w.path === wtDialog.path)?.worktree?.mainRepo ?? wtDialog.path)}</strong> on this branch, so the agent's changes stay apart from your working copy. If the branch exists it is checked out, otherwise it is created from the current commit.</p>
+        <label className="field">Branch name
+          <input autoFocus value={wtDialog.branch} spellCheck={false} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setWtDialog({ ...wtDialog, branch: e.target.value, error: '' })} />
+        </label>
+        {wtDialog.error && <p className="warnline" role="alert">{wtDialog.error}</p>}
+        <div className="row">
+          <button type="submit" className="primary" disabled={wtDialog.busy || !wtDialog.branch.trim()}>{wtDialog.busy ? 'Creating…' : 'Create and start'}</button>
+          <button type="button" disabled={wtDialog.busy} onClick={() => setWtDialog(undefined)}>Cancel</button>
+        </div>
+      </form>
+    </div>
   )
   const searchDialog = searching && (
     <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearching(false) }}>
@@ -224,11 +272,12 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
       <>
         {sidebar}
         {searchDialog}
+        {worktreeDialog}
         <div className="center dashboard">
           <h2>Code</h2>
           <p className="muted">Pick a project folder. Mistral Vibe runs inside it and can read and edit files there.</p>
           <button className="primary" onClick={() => void choose()}>Choose folder…</button>
-          {!!shown.length && <WorkspaceList workspaces={shown} variant="cards" onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} />}
+          {!!shown.length && <WorkspaceList workspaces={shown} variant="cards" onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} onNewWorktree={openWorktreeDialog} onRemoveWorktree={(w) => void removeWorktree(w)} />}
         </div>
       </>
     )
@@ -238,6 +287,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     <>
     {sidebar}
     {searchDialog}
+    {worktreeDialog}
     <div className="content">
       <header className="bar">
         <span className="folder" title={folder}>📁 {folder}</span>
