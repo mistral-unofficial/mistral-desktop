@@ -70,6 +70,8 @@ const api: Api = {
     listSessions: (id) => inv('code:listSessions', id),
     resume: (id, sid) => inv('code:resume', id, sid),
     workspaces: () => inv('code:workspaces'),
+    renameSession: (sid, title) => inv('code:renameSession', sid, title),
+    deleteSession: (sid) => inv('code:deleteSession', sid),
     onEvent: (cb) => sub<[string, CodeEvent]>('code:event', cb)
   }
 }

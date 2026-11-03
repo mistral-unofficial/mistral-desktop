@@ -9,7 +9,7 @@ import { SecretVault } from '../src/main/vault'
 import type { McpServerConfig } from '../src/shared/types'
 
 const remote = (o: Partial<McpServerConfig> & { url: string }): McpServerConfig => ({ id: 'r1', name: 'remote', enabled: true, transport: 'http', command: '', args: [], env: {}, ...o })
-const crypto = { available: () => true, encrypt: (s: string) => Buffer.from(s), decrypt: (b: Buffer) => b.toString() }
+const crypto = { available: async () => true, encrypt: async (s: string) => Buffer.from(s), decrypt: async (b: Buffer) => b.toString() }
 const newStore = (dir = mkdtempSync(join(tmpdir(), 'md-oauth-'))) => new OAuthStore(new SecretVault(dir, crypto))
 /** Stands in for the user's browser: follows the authorize redirect to the app's loopback callback. */
 const fakeBrowser = async (url: string): Promise<void> => void (await fetch(url, { redirect: 'follow' }))
@@ -87,7 +87,7 @@ describe('remote MCP with OAuth', () => {
     expect(h.status()[0]).toMatchObject({ state: 'connected', tools: ['echo'] })
     expect((await h.call('remote__echo', { text: 'x' })).text).toBe('REMOTE:x')
     expect(s.stats).toMatchObject({ registrations: 1, authorizes: 1, tokens: 1 })
-    expect(h.accessToken('r1')).toMatch(/^tok-/)
+    expect(await h.accessToken('r1')).toMatch(/^tok-/)
   }, 30000)
 
   it('a new host reconnects silently from stored tokens, and refreshes expired ones', async () => {
@@ -121,7 +121,7 @@ describe('remote MCP with OAuth', () => {
     await h.authorize('r1')
     await h.signOut('r1')
     expect(h.status()[0]!.state).toBe('needs-auth')
-    expect(store.get('r1').tokens).toBeUndefined()
+    expect((await store.get('r1')).tokens).toBeUndefined()
   }, 30000)
 
   it('authorize reports a cancelled sign-in', async () => {
@@ -187,8 +187,8 @@ describe('OAuth callback server', () => {
 
 describe('toAcpServers', () => {
   const stdio: McpServerConfig = { id: 's', name: 'local', enabled: true, command: 'node', args: ['a'], env: { K: 'v' } }
-  it('keeps the stdio shape, converts http servers and headers, and skips unsafe or unauthenticated ones', () => {
-    const out = toAcpServers(
+  it('keeps the stdio shape, converts http servers and headers, and skips unsafe or unauthenticated ones', async () => {
+    const out = await toAcpServers(
       [
         stdio,
         { ...stdio, id: 'off', enabled: false },
@@ -197,7 +197,7 @@ describe('toAcpServers', () => {
         remote({ id: 'o2', name: 'o2', url: 'https://o2.example/mcp', oauth: true }),
         remote({ id: 'bad', name: 'bad', url: 'http://plain.example/mcp' })
       ],
-      (id) => (id === 'o' ? 'T0KEN' : undefined)
+      async (id) => (id === 'o' ? 'T0KEN' : undefined)
     )
     expect(out).toEqual([
       { name: 'local', command: 'node', args: ['a'], env: [{ name: 'K', value: 'v' }] },

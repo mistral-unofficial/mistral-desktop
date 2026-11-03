@@ -72,6 +72,10 @@ export interface Api {
     /** Recently opened folders with their stored sessions. Starts a short-lived Vibe process to read them. */
     workspaces(): Promise<CodeWorkspace[]>
     resume(id: string, sessionId: string): Promise<CodeResumeResult>
+    /** Renames a stored session through Vibe. Resolves to an error message, or undefined on success. */
+    renameSession(sessionId: string, title: string): Promise<string | undefined>
+    /** Deletes a stored session through Vibe (the open one is stopped too). Resolves to an error message, or undefined. */
+    deleteSession(sessionId: string): Promise<string | undefined>
     onEvent(cb: (id: string, e: CodeEvent) => void): () => void
   }
 }

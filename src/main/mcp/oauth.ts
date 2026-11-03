@@ -19,17 +19,18 @@ export const oauthKey = (serverId: string): string => `oauth:${serverId}`
 
 export class OAuthStore {
   constructor(private vault: SecretVault) {}
-  get(id: string): Stored {
-    return this.vault.get<Stored>(oauthKey(id)) ?? {}
+  async get(id: string): Promise<Stored> {
+    return (await this.vault.get<Stored>(oauthKey(id))) ?? {}
   }
-  update(id: string, patch: Partial<Stored>): void {
-    this.vault.set(oauthKey(id), { ...this.get(id), ...patch })
+  async update(id: string, patch: Partial<Stored>): Promise<void> {
+    const existing = await this.get(id)
+    await this.vault.set(oauthKey(id), { ...existing, ...patch })
   }
-  clear(id: string): void {
-    this.vault.delete(oauthKey(id))
+  async clear(id: string): Promise<void> {
+    await this.vault.delete(oauthKey(id))
   }
-  accessToken(id: string): string | undefined {
-    return this.get(id).tokens?.access_token
+  async accessToken(id: string): Promise<string | undefined> {
+    return (await this.get(id)).tokens?.access_token
   }
 }
 
@@ -132,25 +133,25 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.opts.onState?.(this.stateValue)
     return this.stateValue
   }
-  clientInformation(): OAuthClientInformationMixed | undefined {
-    const s = this.store.get(this.serverId)
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const s = await this.store.get(this.serverId)
     // A registration is only valid for the redirect URL it was made with.
     return s.registeredRedirect === this.opts.redirectUrl ? s.clientInformation : undefined
   }
-  saveClientInformation(info: OAuthClientInformationMixed): void {
-    this.store.update(this.serverId, { clientInformation: info, registeredRedirect: this.opts.redirectUrl })
+  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
+    await this.store.update(this.serverId, { clientInformation: info, registeredRedirect: this.opts.redirectUrl })
   }
-  tokens(): OAuthTokens | undefined {
-    return this.store.get(this.serverId).tokens
+  async tokens(): Promise<OAuthTokens | undefined> {
+    return (await this.store.get(this.serverId)).tokens
   }
-  saveTokens(tokens: OAuthTokens): void {
-    this.store.update(this.serverId, { tokens })
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    await this.store.update(this.serverId, { tokens })
   }
-  saveCodeVerifier(v: string): void {
-    this.store.update(this.serverId, { codeVerifier: v })
+  async saveCodeVerifier(v: string): Promise<void> {
+    await this.store.update(this.serverId, { codeVerifier: v })
   }
-  codeVerifier(): string {
-    const v = this.store.get(this.serverId).codeVerifier
+  async codeVerifier(): Promise<string> {
+    const v = (await this.store.get(this.serverId)).codeVerifier
     if (!v) throw new Error('No code verifier saved')
     return v
   }
@@ -160,11 +161,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (!/^https?:$/.test(url.protocol)) throw new Error('Refusing to open a non-http authorization URL')
     await this.opts.openExternal?.(url.toString())
   }
-  invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): void {
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
     const patch: Partial<Stored> = {}
     if (scope === 'all' || scope === 'client') Object.assign(patch, { clientInformation: undefined, registeredRedirect: undefined })
     if (scope === 'all' || scope === 'tokens') patch.tokens = undefined
     if (scope === 'all' || scope === 'verifier') patch.codeVerifier = undefined
-    this.store.update(this.serverId, patch)
+    await this.store.update(this.serverId, patch)
   }
 }

@@ -6,6 +6,7 @@ const w = (o) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...o }) +
 let authed = mode !== 'needsauth'
 let permResolve
 let current = 's1'
+let n1done = false // mode slowturn: the new session is listed only once its first turn has finished
 readline.createInterface({ input: process.stdin }).on('line', (l) => {
   const m = JSON.parse(l)
   if (m.method === 'initialize') {
@@ -26,9 +27,16 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
     if (!authed) return w({ id: m.id, error: { code: -32000, message: 'Missing API key for mistral provider.' } })
     process.stderr.write('mcp:' + JSON.stringify(m.params.mcpServers) + '\n')
     w({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', messageId: 'n', content: { type: 'text', text: 'new-servers=' + JSON.stringify(m.params.mcpServers) } } } })
-    w({ id: m.id, result: { sessionId: 's1', modes: { currentModeId: 'accept-edits', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'accept-edits', name: 'Accept Edits' }] } } })
+    w({ id: m.id, result: { sessionId: mode === 'slowturn' ? 'n1' : 's1', modes: { currentModeId: 'accept-edits', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'accept-edits', name: 'Accept Edits' }] } } })
+  } else if (m.method === '_session/set_title') {
+    process.stderr.write('renamed:' + m.params.sessionId + ':' + m.params.title + '\n')
+    if (m.params.sessionId === 'missing') return w({ id: m.id, error: { code: -32602, message: 'Session not found' } })
+    w({ id: m.id, result: {} })
+  } else if (m.method === '_session/delete') {
+    if (m.params.sessionId === 'missing') return w({ id: m.id, error: { code: -32602, message: 'Session not found' } })
+    w({ id: m.id, result: {} })
   } else if (m.method === 'session/list') {
-    w({ id: m.id, result: { sessions: [
+    w({ id: m.id, result: { sessions: mode === 'slowturn' ? [{ sessionId: 'old-1', cwd: m.params.cwd, title: 'Old chat', updatedAt: '2026-01-01T00:00:00+00:00' }, ...(n1done ? [{ sessionId: 'n1', cwd: m.params.cwd, title: 'Vibe-made title', updatedAt: '2026-11-03T00:00:00+00:00' }] : [])] : [
       { sessionId: 'old-1', cwd: m.params.cwd, title: 'Old chat', updatedAt: '2026-01-01T00:00:00+00:00' },
       { sessionId: 's1', cwd: m.params.cwd, title: 'current', updatedAt: '2026-06-01T00:00:00+00:00' },
       { sessionId: 'old-2', cwd: m.params.cwd, title: null, updatedAt: '2026-03-01T00:00:00+00:00' }
@@ -55,7 +63,8 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
         upd({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'outcome=' + JSON.stringify(outcome) } })
         w({ id: m.id, result: { stopReason: outcome.outcome === 'cancelled' ? 'cancelled' : 'end_turn' } })
       })
-    } else w({ id: m.id, result: { stopReason: 'end_turn' } })
+    } else if (mode === 'slowturn') setTimeout(() => { n1done = true; w({ id: m.id, result: { stopReason: 'end_turn' } }) }, 4000)
+    else w({ id: m.id, result: { stopReason: 'end_turn' } })
   } else if (m.method === 'session/cancel') {
     permResolve?.({ outcome: 'cancelled' })
   } else if (m.id === 900 && m.result) {

@@ -98,7 +98,7 @@ export class CodeService {
     client.on('exit', (code: number | null) => this.emit(id, { type: 'exit', code }))
 
     const env: NodeJS.ProcessEnv = { PATH: augmentedPath() }
-    const key = this.settings.getApiKey()
+    const key = await this.settings.getApiKey()
     if (key) env.MISTRAL_API_KEY = key
     if (s.vibeHome) env.VIBE_HOME = s.vibeHome
     const cmd = resolveVibeCommand(s.vibePath)
@@ -125,7 +125,7 @@ export class CodeService {
       const res = await sess.client.newSession(sess.cwd, await this.getServers())
       sess.acpSessionId = res.sessionId
       const modes: CodeMode[] = res.modes?.availableModes ?? []
-      return { status: 'ready', id, modes, currentMode: res.modes?.currentModeId ?? '', canResume: sess.canList && sess.canLoad }
+      return { status: 'ready', id, modes, currentMode: res.modes?.currentModeId ?? '', canResume: sess.canList && sess.canLoad, sessionId: res.sessionId }
     } catch (e) {
       const msg = (e as Error).message
       if (sess.authMethods.length && e instanceof AcpError) {
@@ -196,7 +196,7 @@ export class CodeService {
     }
     const key = await this.readKey(s.vibeHome)
     if (!key) return { ok: false, error: 'Signed in, but the key Vibe created could not be read from the keychain or ~/.vibe/.env. Paste an API key instead.' }
-    this.settings.setApiKey(key)
+    await this.settings.setApiKey(key)
     return { ok: true }
   }
 
@@ -223,24 +223,67 @@ export class CodeService {
     return this.workspacesInflight
   }
 
-  private async readWorkspaces(): Promise<CodeWorkspace[]> {
+  /** Runs `fn` against a short-lived agent process that is not tied to any folder or session. */
+  private async withTempAgent<T>(fn: (client: AcpClient, caps: { canList: boolean }) => Promise<T>, fallback: T): Promise<T> {
     const s = this.settings.get()
-    const folders = s.recentFolders.filter((f) => existsSync(f))
-    const bare = folders.map((path) => ({ path, sessions: [] as CodeSessionInfo[] }))
-    if (!folders.length) return bare
     const client = new AcpClient()
     client.on('stderr', () => undefined)
     client.start(resolveVibeCommand(s.vibePath), [], { cwd: homedir(), env: { PATH: augmentedPath(), ...(s.vibeHome ? { VIBE_HOME: s.vibeHome } : {}) } })
     try {
       const init = await client.initialize()
-      if (!init.agentCapabilities?.sessionCapabilities?.list) return bare
+      return await fn(client, { canList: !!init.agentCapabilities?.sessionCapabilities?.list })
+    } catch (e) {
+      if (fallback === undefined) throw e
+      return fallback
+    } finally {
+      client.kill()
+    }
+  }
+
+  private async readWorkspaces(): Promise<CodeWorkspace[]> {
+    const folders = this.settings.get().recentFolders.filter((f) => existsSync(f))
+    const bare = folders.map((path) => ({ path, sessions: [] as CodeSessionInfo[] }))
+    if (!folders.length) return bare
+    return this.withTempAgent(async (client, { canList }) => {
+      if (!canList) return bare
       const out: CodeWorkspace[] = []
       for (const path of folders) out.push({ path, sessions: await collectSessions(client, path).catch(() => []) })
       return out
-    } catch {
-      return bare
-    } finally {
-      client.kill()
+    }, bare)
+  }
+
+  private liveSession(sessionId: string): [string, Session] | undefined {
+    return [...this.sessions.entries()].find(([, s]) => s.acpSessionId === sessionId)
+  }
+
+  /** Renames a stored session. Goes through the open agent when it holds the session, so it does not overwrite the new title later. */
+  async renameSession(sessionId: string, title: string): Promise<string | undefined> {
+    const t = title.trim()
+    if (!t) return 'The name cannot be empty'
+    try {
+      const live = this.liveSession(sessionId)
+      if (live) await live[1].client.renameSession(sessionId, t)
+      else await this.withTempAgent((c) => c.renameSession(sessionId, t), undefined)
+      return undefined
+    } catch (e) {
+      return (e as Error).message
+    }
+  }
+
+  /** Deletes a stored session. If it is the open one, its agent is closed and stopped as well. */
+  async deleteSession(sessionId: string): Promise<string | undefined> {
+    try {
+      const live = this.liveSession(sessionId)
+      if (live) {
+        try {
+          await live[1].client.deleteSession(sessionId)
+        } finally {
+          this.drop(live[0])
+        }
+      } else await this.withTempAgent((c) => c.deleteSession(sessionId), undefined)
+      return undefined
+    } catch (e) {
+      return (e as Error).message
     }
   }
 

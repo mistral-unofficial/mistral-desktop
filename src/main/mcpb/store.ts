@@ -76,8 +76,8 @@ export class ExtensionStore {
       return undefined
     }
   }
-  private secrets(id: string): Record<string, UserConfigValue> {
-    return this.vault.get<Record<string, UserConfigValue>>(`ext:${id}`) ?? {}
+  private async secrets(id: string): Promise<Record<string, UserConfigValue>> {
+    return (await this.vault.get<Record<string, UserConfigValue>>(`ext:${id}`)) ?? {}
   }
   private pathExists(): (p: string, k: 'file' | 'directory') => boolean {
     return this.env.pathExists ?? defaultPathExists
@@ -94,7 +94,7 @@ export class ExtensionStore {
 
   // ---- preview / install ----
 
-  preview(bytes: Uint8Array): ExtensionPreview {
+  async preview(bytes: Uint8Array): Promise<ExtensionPreview> {
     for (const [k, v] of this.staged) if (Date.now() - v.at > 10 * 60_000) this.staged.delete(k)
     const parsed = parseBundle(bytes, this.env.platform)
     const m = parsed.manifest
@@ -104,7 +104,7 @@ export class ExtensionStore {
     while (this.staged.size > 3) this.staged.delete(this.staged.keys().next().value as string)
     const state = this.load().items[id]
     const prevManifest = state ? this.manifestOf(id) : undefined
-    const secretKeys = Object.keys(this.secrets(id))
+    const secretKeys = Object.keys(await this.secrets(id))
     return {
       stagingId,
       id,
@@ -132,7 +132,7 @@ export class ExtensionStore {
     this.staged.delete(stagingId)
   }
 
-  install(stagingId: string, raw: Record<string, unknown>): ExtensionResult {
+  async install(stagingId: string, raw: Record<string, unknown>): Promise<ExtensionResult> {
     const entry = this.staged.get(stagingId)
     if (!entry) return { ok: false, error: 'This install session expired. Choose the file again.' }
     const { parsed } = entry
@@ -140,7 +140,7 @@ export class ExtensionStore {
     const id = idFromName(m.name)
     const state = this.load()
     const prev = state.items[id]
-    const prevSecrets = this.secrets(id)
+    const prevSecrets = await this.secrets(id)
     const fields = m.user_config ?? {}
     // Start from defaults, then previous values, then what the user entered.
     const merged: Record<string, unknown> = { ...this.resolveDefaults(m), ...(prev?.values ?? {}), ...raw }
@@ -151,13 +151,13 @@ export class ExtensionStore {
     } catch (e) {
       return { ok: false, error: e instanceof BundleError ? e.message : `Install failed: ${(e as Error).message}` }
     }
-    this.persistValues(id, m, values, prevSecrets, prev?.enabled ?? true, prev?.installedAt, parsed.signed)
+    await this.persistValues(id, m, values, prevSecrets, prev?.enabled ?? true, prev?.installedAt, parsed.signed)
     this.staged.delete(stagingId)
     this.onChange?.()
-    return { ok: true, extension: this.describe(id)! }
+    return { ok: true, extension: (await this.describe(id))! }
   }
 
-  private persistValues(id: string, m: Manifest, values: Record<string, UserConfigValue>, prevSecrets: Record<string, UserConfigValue>, enabled: boolean, installedAt?: number, signed?: boolean): void {
+  private async persistValues(id: string, m: Manifest, values: Record<string, UserConfigValue>, prevSecrets: Record<string, UserConfigValue>, enabled: boolean, installedAt?: number, signed?: boolean): Promise<void> {
     const fields = m.user_config ?? {}
     const plain: Record<string, UserConfigValue> = {}
     const secret: Record<string, UserConfigValue> = {}
@@ -167,8 +167,8 @@ export class ExtensionStore {
         if (v !== undefined) secret[k] = v
       } else if (values[k] !== undefined) plain[k] = values[k]!
     }
-    if (Object.keys(secret).length) this.vault.set(`ext:${id}`, secret)
-    else this.vault.delete(`ext:${id}`)
+    if (Object.keys(secret).length) await this.vault.set(`ext:${id}`, secret)
+    else await this.vault.delete(`ext:${id}`)
     const state = this.load()
     state.items[id] = { enabled, values: plain, installedAt: installedAt ?? Date.now(), signed: signed ?? state.items[id]?.signed }
     this.save(state)
@@ -176,17 +176,17 @@ export class ExtensionStore {
 
   // ---- queries / changes ----
 
-  private effectiveValues(id: string, m: Manifest): Record<string, UserConfigValue> {
+  private async effectiveValues(id: string, m: Manifest): Promise<Record<string, UserConfigValue>> {
     const stored = this.load().items[id]
-    return { ...this.resolveDefaults(m), ...(stored?.values ?? {}), ...this.secrets(id) }
+    return { ...this.resolveDefaults(m), ...(stored?.values ?? {}), ...(await this.secrets(id)) }
   }
 
-  describe(id: string): InstalledExtension | undefined {
+  async describe(id: string): Promise<InstalledExtension | undefined> {
     const stored = this.load().items[id]
     const m = this.manifestOf(id)
     if (!stored || !m) return undefined
     const fields = m.user_config ?? {}
-    const all = this.effectiveValues(id, m)
+    const all = await this.effectiveValues(id, m)
     const secretKeys = Object.keys(fields).filter((k) => fields[k]!.sensitive && all[k] !== undefined)
     const values: Record<string, UserConfigValue> = {}
     for (const [k, v] of Object.entries(all)) if (!fields[k]?.sensitive) values[k] = v
@@ -221,9 +221,10 @@ export class ExtensionStore {
     }
   }
 
-  list(): InstalledExtension[] {
-    return Object.keys(this.load().items)
-      .map((id) => this.describe(id))
+  async list(): Promise<InstalledExtension[]> {
+    const items = Object.keys(this.load().items)
+    const described = await Promise.all(items.map((id) => this.describe(id)))
+    return described
       .filter((x): x is InstalledExtension => !!x)
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
   }
@@ -236,24 +237,24 @@ export class ExtensionStore {
     this.onChange?.()
   }
 
-  configure(id: string, raw: Record<string, unknown>): ExtensionResult {
+  async configure(id: string, raw: Record<string, unknown>): Promise<ExtensionResult> {
     const m = this.manifestOf(id)
     const s = this.load()
     if (!m || !s.items[id]) return { ok: false, error: 'Extension not found' }
-    const prevSecrets = this.secrets(id)
+    const prevSecrets = await this.secrets(id)
     const merged = { ...this.resolveDefaults(m), ...s.items[id]!.values, ...raw }
     const { values, errors } = normalizeUserConfig(m.user_config ?? {}, merged, { keepSecret: Object.keys(prevSecrets), pathExists: this.pathExists() })
     if (Object.keys(errors).length) return { ok: false, error: 'Some settings are invalid.', fieldErrors: errors }
-    this.persistValues(id, m, values, prevSecrets, s.items[id]!.enabled, s.items[id]!.installedAt)
+    await this.persistValues(id, m, values, prevSecrets, s.items[id]!.enabled, s.items[id]!.installedAt)
     this.onChange?.()
-    return { ok: true, extension: this.describe(id)! }
+    return { ok: true, extension: (await this.describe(id))! }
   }
 
-  uninstall(id: string): void {
+  async uninstall(id: string): Promise<void> {
     const s = this.load()
     delete s.items[id]
     this.save(s)
-    this.vault.delete(`ext:${id}`)
+    await this.vault.delete(`ext:${id}`)
     if (/^[a-z0-9][a-z0-9._-]*$/.test(id)) rmSync(join(this.root, id), { recursive: true, force: true })
     this.onChange?.()
   }
@@ -266,7 +267,7 @@ export class ExtensionStore {
       const m = this.manifestOf(id)
       if (!m) continue
       const dir = join(this.root, id)
-      const userConfig = this.effectiveValues(id, m)
+      const userConfig = await this.effectiveValues(id, m)
       if (hasRequiredConfigMissing({ manifest: m as never, userConfig })) {
         // Shown in the UI as "needs setup"; still listed so the user sees why it is not running.
         out.push({ id: `ext:${id}`, name: m.name, enabled: false, command: '', args: [], env: {}, extensionId: id })

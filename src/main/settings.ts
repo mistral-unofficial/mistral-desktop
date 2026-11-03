@@ -3,9 +3,9 @@ import { dirname, join } from 'node:path'
 import type { Settings, SettingsView } from '../shared/types'
 
 export interface SecretCrypto {
-  available(): boolean
-  encrypt(s: string): Buffer
-  decrypt(b: Buffer): string
+  available(): Promise<boolean>
+  encrypt(s: string): Promise<Buffer>
+  decrypt(b: Buffer): Promise<string>
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -44,8 +44,8 @@ export class SettingsStore {
   private get file(): string {
     return join(this.dir, 'settings.json')
   }
-  private get keyFile(): string {
-    return join(this.dir, this.crypto.available() ? 'api-key.enc' : 'api-key.txt')
+  private async keyFile(): Promise<string> {
+    return join(this.dir, (await this.crypto.available()) ? 'api-key.enc' : 'api-key.txt')
   }
 
   private load(): Settings {
@@ -67,11 +67,12 @@ export class SettingsStore {
     return this.cache
   }
 
-  getApiKey(): string | undefined {
+  async getApiKey(): Promise<string | undefined> {
     if (this.env.MISTRAL_API_KEY) return this.env.MISTRAL_API_KEY
     try {
-      if (this.crypto.available() && existsSync(join(this.dir, 'api-key.enc'))) {
-        return this.crypto.decrypt(readFileSync(join(this.dir, 'api-key.enc')))
+      const available = await this.crypto.available()
+      if (available && existsSync(join(this.dir, 'api-key.enc'))) {
+        return await this.crypto.decrypt(readFileSync(join(this.dir, 'api-key.enc')))
       }
       if (existsSync(join(this.dir, 'api-key.txt'))) return readFileSync(join(this.dir, 'api-key.txt'), 'utf8').trim() || undefined
     } catch {
@@ -80,11 +81,13 @@ export class SettingsStore {
     return undefined
   }
 
-  setApiKey(key: string): void {
+  async setApiKey(key: string): Promise<void> {
     const k = key.trim()
     if (!k) return
     this.clearApiKey()
-    atomicWrite(this.keyFile, this.crypto.available() ? this.crypto.encrypt(k) : k)
+    const available = await this.crypto.available()
+    const file = await this.keyFile()
+    atomicWrite(file, available ? await this.crypto.encrypt(k) : k)
   }
 
   clearApiKey(): void {
@@ -97,7 +100,8 @@ export class SettingsStore {
     }
   }
 
-  view(): SettingsView {
-    return { ...this.cache, hasApiKey: !!this.getApiKey(), insecureKeyStorage: !this.crypto.available() }
+  async view(): Promise<SettingsView> {
+    const [available, apiKey] = await Promise.all([this.crypto.available(), this.getApiKey()])
+    return { ...this.cache, hasApiKey: !!apiKey, insecureKeyStorage: !available }
   }
 }

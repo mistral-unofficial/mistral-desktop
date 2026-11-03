@@ -48,7 +48,7 @@ describe('McpHost', () => {
 })
 
 describe('toAcpServers', () => {
-  it('keeps only enabled servers and converts env', () => {
-    expect(toAcpServers([cfg({ env: { A: '1' } }), cfg({ id: 'b', enabled: false })])).toEqual([{ name: 'My Server!', command: process.execPath, args: [resolve('tests/fixtures/mini-mcp.mjs')], env: [{ name: 'A', value: '1' }] }])
+  it('keeps only enabled servers and converts env', async () => {
+    expect(await toAcpServers([cfg({ env: { A: '1' } }), cfg({ id: 'b', enabled: false })])).toEqual([{ name: 'My Server!', command: process.execPath, args: [resolve('tests/fixtures/mini-mcp.mjs')], env: [{ name: 'A', value: '1' }] }])
   })
 })

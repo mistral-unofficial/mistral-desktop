@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { CodeWorkspace } from '@shared/types'
+import type { CodeSessionInfo, CodeWorkspace } from '@shared/types'
+import { ContextMenu } from '../ContextMenu'
 
 export const folderName = (p: string): string => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
 
@@ -13,11 +14,20 @@ interface Props {
   variant: 'side' | 'cards'
   onNewSession: (path: string) => void
   onOpen: (path: string, sessionId: string) => void
+  onRename: (path: string, session: CodeSessionInfo, title: string) => void
+  onDelete: (path: string, session: CodeSessionInfo) => void
 }
 
-export function WorkspaceList({ workspaces, activeFolder, activeSessionId, variant, onNewSession, onOpen }: Props) {
+export function WorkspaceList({ workspaces, activeFolder, activeSessionId, variant, onNewSession, onOpen, onRename, onDelete }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string; session: CodeSessionInfo }>()
+  const [editing, setEditing] = useState<{ id: string; text: string }>()
+  const commit = (path: string, session: CodeSessionInfo): void => {
+    const title = editing?.text.trim()
+    setEditing(undefined)
+    if (title && title !== session.title) onRename(path, session, title)
+  }
   const flip = (set: Set<string>, setter: (s: Set<string>) => void, key: string): void => {
     const next = new Set(set)
     if (!next.delete(key)) next.add(key)
@@ -43,10 +53,31 @@ export function WorkspaceList({ workspaces, activeFolder, activeSessionId, varia
               <ul className="wssessions">
                 {shown.map((s) => (
                   <li key={s.sessionId}>
-                    <button className={w.path === activeFolder && s.sessionId === activeSessionId ? 'wssession current' : 'wssession'} title={s.title} onClick={() => onOpen(w.path, s.sessionId)}>
-                      <span className="wssession-title">{s.title}</span>
-                      {variant === 'cards' && s.updatedAt && <span className="muted">{new Date(s.updatedAt).toLocaleDateString()}</span>}
-                    </button>
+                    {editing?.id === s.sessionId ? (
+                      <input
+                        className="wsrename"
+                        autoFocus
+                        aria-label="Session name"
+                        value={editing.text}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setEditing({ id: s.sessionId, text: e.target.value })}
+                        onBlur={() => commit(w.path, s)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit(w.path, s)
+                          if (e.key === 'Escape') setEditing(undefined)
+                        }}
+                      />
+                    ) : (
+                      <button
+                        className={w.path === activeFolder && s.sessionId === activeSessionId ? 'wssession current' : 'wssession'}
+                        title={s.title}
+                        onClick={() => onOpen(w.path, s.sessionId)}
+                        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, path: w.path, session: s }) }}
+                      >
+                        <span className="wssession-title">{s.title}</span>
+                        {variant === 'cards' && s.updatedAt && <span className="muted">{new Date(s.updatedAt).toLocaleDateString()}</span>}
+                      </button>
+                    )}
                   </li>
                 ))}
                 {!w.sessions.length && <li className="muted wsempty">No sessions yet</li>}
@@ -58,6 +89,17 @@ export function WorkspaceList({ workspaces, activeFolder, activeSessionId, varia
           </section>
         )
       })}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(undefined)}
+          items={[
+            { label: 'Rename', onSelect: () => setEditing({ id: menu.session.sessionId, text: menu.session.title }) },
+            { label: 'Delete', danger: true, onSelect: () => onDelete(menu.path, menu.session) }
+          ]}
+        />
+      )}
     </div>
   )
 }

@@ -8,7 +8,7 @@ import { SettingsStore } from '../src/main/settings'
 
 const AGENT = resolve('tests/fixtures/fake-agent.mjs')
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'md-code-'))
-const noCrypto = { available: () => false, encrypt: (s: string) => Buffer.from(s), decrypt: (b: Buffer) => b.toString() }
+const noCrypto = { available: async () => false, encrypt: async (s: string) => Buffer.from(s), decrypt: async (b: Buffer) => b.toString() }
 
 function service(mode: string, extra: Record<string, unknown> = {}, servers: unknown[] = []) {
   process.env.FAKE_MODE = mode
@@ -52,7 +52,7 @@ describe('CodeService with a fake ACP agent', () => {
       { id: '2', name: 'off', command: 'node', args: [], env: {}, enabled: false },
       { id: '3', name: 'web', transport: 'http', url: 'https://x.example/mcp', headers: { A: 'b' }, command: '', args: [], env: {}, enabled: true }
     ]
-    const { svc, events, waitFor } = service('normal', {}, toAcpServers(configs))
+    const { svc, events, waitFor } = service('normal', {}, await toAcpServers(configs))
     const r = await svc.start(tmp())
     expect(r.status).toBe('ready')
     const e = await waitFor((x) => /new-servers=/.test(JSON.stringify(x)))
@@ -180,7 +180,7 @@ describe('CodeService with a fake ACP agent', () => {
     expect(r).toEqual({ ok: true })
     expect(closeCalls).toBeGreaterThan(0) // the window is closed once sign-in is done
     expect(opened).toEqual(['https://auth.example/sign-in?x=1'])
-    expect(settings.getApiKey()).toBe('key-from-vibe')
+    expect(await settings.getApiKey()).toBe('key-from-vibe')
     void svc
   })
 
@@ -189,7 +189,7 @@ describe('CodeService with a fake ACP agent', () => {
     const svc = new CodeService(settings, () => undefined, async () => [], async () => 'never')
     const r = await svc.signInWithBrowser({ open: () => ({ closed: Promise.resolve(), close: () => undefined }) })
     expect(r.ok).toBe(true)
-    expect(settings.getApiKey()).toBe('never')
+    expect(await settings.getApiKey()).toBe('never')
   })
 
   it('delegated sign-in: a failed exchange reports the error and still closes the window', async () => {
@@ -199,7 +199,27 @@ describe('CodeService with a fake ACP agent', () => {
     const r = await svc.signInWithBrowser({ open: () => ({ closed: new Promise<void>(() => undefined), close: () => void closed++ }) })
     expect(r).toEqual({ ok: false, error: 'Sign-in exchange failed' })
     expect(closed).toBe(1)
-    expect(settings.getApiKey()).toBeUndefined()
+    expect(await settings.getApiKey()).toBeUndefined()
+  })
+
+  it('renames and deletes stored sessions, reporting errors as messages', async () => {
+    const { svc } = service('normal')
+    expect(await svc.renameSession('old-1', '  New name ')).toBeUndefined()
+    expect(await svc.renameSession('old-1', '   ')).toBe('The name cannot be empty')
+    expect(await svc.renameSession('missing', 'x')).toBe('Session not found')
+    expect(await svc.deleteSession('old-1')).toBeUndefined()
+    expect(await svc.deleteSession('missing')).toBe('Session not found')
+  })
+
+  it('deleting the open session stops its agent; renaming it goes through the open agent', async () => {
+    const { svc, events } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    expect(r.sessionId).toBe('s1')
+    expect(await svc.renameSession('s1', 'Mine')).toBeUndefined()
+    expect(await svc.deleteSession('s1')).toBeUndefined()
+    svc.prompt(r.id, 'still there?')
+    expect(events.some((e) => e.type === 'error')).toBe(true) // the session is gone
   })
 
   it('rejects a path that is not a folder', async () => {

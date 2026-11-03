@@ -151,6 +151,15 @@ export class AcpClient extends EventEmitter {
     return this.request('session/load', { sessionId, cwd, mcpServers })
   }
 
+  /** Vibe extension methods (JSON-RPC names start with an underscore). */
+  renameSession(sessionId: string, title: string): Promise<unknown> {
+    return this.request('_session/set_title', { sessionId, title })
+  }
+
+  deleteSession(sessionId: string): Promise<unknown> {
+    return this.request('_session/delete', { sessionId })
+  }
+
   closeSession(sessionId: string): Promise<unknown> {
     return this.request('session/close', { sessionId })
   }

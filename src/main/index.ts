@@ -45,18 +45,20 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   const dir = process.env.MISTRAL_DESKTOP_DATA || app.getPath('userData')
-  const strongEncryption = (): boolean => {
-    if (!safeStorage.isEncryptionAvailable()) return false
+  const strongEncryption = async (): Promise<boolean> => {
+    const available = await safeStorage.isAsyncEncryptionAvailable()
+    if (!available) return false
     // On Linux without a keyring Electron falls back to a hardcoded key ("basic_text"): not real protection.
     const backend = (safeStorage as unknown as { getSelectedStorageBackend?: () => string }).getSelectedStorageBackend?.()
     return backend !== 'basic_text'
   }
-  const settings = new SettingsStore(dir, {
+  // The async safeStorage API; the sync one (encryptString, decryptString, isEncryptionAvailable) is deprecated.
+  const crypto = {
     available: strongEncryption,
-    encrypt: (s) => safeStorage.encryptString(s),
-    decrypt: (b) => safeStorage.decryptString(b)
-  })
-  const crypto = { available: strongEncryption, encrypt: (s: string) => safeStorage.encryptString(s), decrypt: (b: Buffer) => safeStorage.decryptString(b) }
+    encrypt: (s: string) => safeStorage.encryptStringAsync(s),
+    decrypt: async (b: Buffer) => (await safeStorage.decryptStringAsync(b)).result
+  }
+  const settings = new SettingsStore(dir, crypto)
   const convs = new ConversationStore(join(dir, 'conversations'))
   const vault = new SecretVault(dir, crypto)
   const extensions = new ExtensionStore(join(dir, 'extensions'), vault, {
@@ -73,7 +75,7 @@ app.whenReady().then(async () => {
   const mcp = new McpHost({ oauth, openExternal })
   mcp.onChange = () => send('mcp:changed', mcp.status())
   /** Manually configured servers plus those provided by installed extensions. */
-  const allServers = async (): Promise<McpServerConfig[]> => [...settings.get().mcpServers, ...(await extensions.servers())]
+  const allServers = async (): Promise<McpServerConfig[]> => [...(settings.get()).mcpServers, ...(await extensions.servers())]
   const resync = (): void => void allServers().then((s) => mcp.sync(s))
   // Settings edits arrive per keystroke; wait for a pause so half-typed URLs/commands are never connected to.
   let resyncTimer: NodeJS.Timeout | undefined
@@ -81,24 +83,24 @@ app.whenReady().then(async () => {
     clearTimeout(resyncTimer)
     resyncTimer = setTimeout(resync, 600)
   }
-  extensions.onChange = () => {
-    send('ext:changed', extensions.list())
+  extensions.onChange = async () => {
+    send('ext:changed', await extensions.list())
     resync()
   }
   const web = new WebSession(() => win)
   const account = new AccountService(fetch, web, join(dir, 'account-cache.json'), (info) => send('account:update', info))
-  const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), (id) => mcp.accessToken(id)))
+  const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), async (id) => mcp.accessToken(id)))
   resync()
 
   // ---- settings ----
-  ipcMain.handle('settings:get', () => settings.view())
+  ipcMain.handle('settings:get', async () => settings.view())
   ipcMain.handle('settings:update', async (_e, patch: Partial<Settings>) => {
     settings.update(patch)
     if (patch.mcpServers) resyncSoon()
     return settings.view()
   })
-  ipcMain.handle('settings:setApiKey', (_e, key: string) => (settings.setApiKey(key), void account.refresh(settings.getApiKey(), settings.get().apiBase), settings.view()))
-  ipcMain.handle('settings:clearApiKey', () => (settings.clearApiKey(), settings.view()))
+  ipcMain.handle('settings:setApiKey', async (_e, key: string) => (await settings.setApiKey(key), void account.refresh(await settings.getApiKey(), settings.get().apiBase), settings.view()))
+  ipcMain.handle('settings:clearApiKey', async () => (settings.clearApiKey(), settings.view()))
   // Forgets the app's API key and the web login. Vibe's own stored sign-in (used by the `vibe` command) is left alone.
   ipcMain.handle('settings:signOut', async () => (settings.clearApiKey(), await web.signOut(), account.clear(), settings.view()))
   // One sign-in for everything: Vibe mints the API key via the console login, then, if the app has no chat.mistral.ai
@@ -108,26 +110,26 @@ app.whenReady().then(async () => {
     const r = await code.signInWithBrowser(web)
     if (!r.ok) return r
     if (!(await web.signedIn())) await web.signInInWindow('https://chat.mistral.ai/code')
-    void account.refresh(settings.getApiKey(), settings.get().apiBase)
+    void account.refresh(await settings.getApiKey(), settings.get().apiBase)
     return { ok: true as const, web: await web.signedIn() }
   })
 
   // ---- account ----
-  ipcMain.handle('account:get', () => account.get(settings.getApiKey(), settings.get().apiBase))
+  ipcMain.handle('account:get', async () => account.get(await settings.getApiKey(), settings.get().apiBase))
   // Opens the website's own sign-in in the app's window; resolves when the window is closed.
   ipcMain.handle('account:webSignIn', async () => {
     await web.signInInWindow('https://chat.mistral.ai/code')
-    return account.refresh(settings.getApiKey(), settings.get().apiBase)
+    return account.refresh(await settings.getApiKey(), settings.get().apiBase)
   })
-  ipcMain.handle('account:webSignOut', async () => (await web.signOut(), account.clear(), account.refresh(settings.getApiKey(), settings.get().apiBase)))
+  ipcMain.handle('account:webSignOut', async () => (await web.signOut(), account.clear(), account.refresh(await settings.getApiKey(), settings.get().apiBase)))
   // Start loading right away so the name and plan are ready by the time the sidebar asks.
-  void account.refresh(settings.getApiKey(), settings.get().apiBase)
+  void account.refresh(await settings.getApiKey(), settings.get().apiBase)
 
   // ---- chat ----
   const runs = new Map<string, AbortController>()
   const approvals = new Map<string, { requestId: string; resolve: (ok: boolean) => void }>()
   ipcMain.handle('chat:models', async () => {
-    const key = settings.getApiKey()
+    const key = await settings.getApiKey()
     if (!key) return FALLBACK_MODELS
     try {
       const m = await listModels(settings.get().apiBase, key)
@@ -138,7 +140,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('chat:send', async (_e, req: { requestId: string; messages: WireMessage[]; model: string }) => {
     const emit = (e: ChatEvent): void => send('chat:event', req.requestId, e)
-    const key = settings.getApiKey()
+    const key = await settings.getApiKey()
     if (!key) return emit({ type: 'error', message: 'Not signed in. Sign in with Mistral or add an API key in Settings.' })
     const ac = new AbortController()
     runs.set(req.requestId, ac)
@@ -182,7 +184,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:signOut', (_e, id: string) => mcp.signOut(id))
 
   // ---- extensions (.mcpb) ----
-  const previewPath = (path: string): ExtensionPreview | { error: string } => {
+  const previewPath = async (path: string): Promise<ExtensionPreview | { error: string }> => {
     try {
       if (!['.mcpb', '.dxt'].includes(extname(path).toLowerCase())) return { error: 'Please choose a .mcpb file' }
       if (statSync(path).size > LIMITS.archiveBytes) return { error: 'Bundle is larger than 150 MB' }
@@ -197,13 +199,13 @@ app.whenReady().then(async () => {
     const r = await dialog.showOpenDialog(win!, { title: 'Install extension', properties: ['openFile'], filters: [{ name: 'MCP bundle', extensions: ['mcpb', 'dxt'] }] })
     return r.canceled || !r.filePaths[0] ? undefined : previewPath(r.filePaths[0])
   })
-  ipcMain.handle('ext:previewPath', (_e, path: string) => previewPath(path))
-  ipcMain.handle('ext:install', (_e, sid: string, values: Record<string, UserConfigValue | string>) => extensions.install(sid, values))
+  ipcMain.handle('ext:previewPath', async (_e, path: string) => previewPath(path))
+  ipcMain.handle('ext:install', async (_e, sid: string, values: Record<string, UserConfigValue | string>) => extensions.install(sid, values))
   ipcMain.handle('ext:discard', (_e, sid: string) => extensions.discard(sid))
-  ipcMain.handle('ext:list', () => extensions.list())
+  ipcMain.handle('ext:list', async () => extensions.list())
   ipcMain.handle('ext:setEnabled', (_e, id: string, enabled: boolean) => extensions.setEnabled(id, enabled))
-  ipcMain.handle('ext:configure', (_e, id: string, values: Record<string, UserConfigValue | string>) => extensions.configure(id, values))
-  ipcMain.handle('ext:uninstall', (_e, id: string) => extensions.uninstall(id))
+  ipcMain.handle('ext:configure', async (_e, id: string, values: Record<string, UserConfigValue | string>) => extensions.configure(id, values))
+  ipcMain.handle('ext:uninstall', async (_e, id: string) => extensions.uninstall(id))
   ipcMain.handle('dialog:pickPath', async (_e, kind: 'file' | 'directory') => {
     if (process.env.MISTRAL_DESKTOP_TEST_FOLDER && kind === 'directory') return process.env.MISTRAL_DESKTOP_TEST_FOLDER
     const r = await dialog.showOpenDialog(win!, { properties: [kind === 'directory' ? 'openDirectory' : 'openFile'] })
@@ -225,6 +227,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
   ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))
   ipcMain.handle('code:workspaces', () => code.listWorkspaces())
+  ipcMain.handle('code:renameSession', (_e, sid: string, title: string) => code.renameSession(sid, title))
+  ipcMain.handle('code:deleteSession', (_e, sid: string) => code.deleteSession(sid))
   ipcMain.handle('code:resume', (_e, id: string, sid: string) => code.resume(id, sid))
 
   app.on('before-quit', () => {

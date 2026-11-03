@@ -95,8 +95,8 @@ export class McpHost implements ToolProvider {
     try {
       // Only use the OAuth machinery when we already hold tokens. Otherwise connect plainly: this works for servers
       // that need no auth, and a 401 just means "needs sign-in" without registering a client behind the user's back.
-      const hasTokens = !!this.deps.oauth?.get(cfg.id).tokens
-      const client = cfg.transport === 'http' ? await this.connectHttp(cfg, hasTokens ? this.providerFor(cfg, false) : undefined) : await this.connectStdio(cfg)
+      const hasTokens = !!(await this.deps.oauth?.get(cfg.id))?.tokens
+      const client = cfg.transport === 'http' ? await this.connectHttp(cfg, hasTokens ? await this.providerFor(cfg, false) : undefined) : await this.connectStdio(cfg)
       client.onclose = () => {
         if (l.state === 'connected') {
           l.state = 'error'
@@ -167,9 +167,9 @@ export class McpHost implements ToolProvider {
     }
   }
 
-  private providerFor(cfg: McpServerConfig, interactive: boolean, redirectUrl?: string, onState?: (s: string) => void): McpOAuthProvider | undefined {
+  private async providerFor(cfg: McpServerConfig, interactive: boolean, redirectUrl?: string, onState?: (s: string) => void): Promise<McpOAuthProvider | undefined> {
     if (!cfg.oauth || !this.deps.oauth) return undefined
-    const registered = this.deps.oauth.get(cfg.id).registeredRedirect
+    const registered = (await this.deps.oauth.get(cfg.id)).registeredRedirect
     return new McpOAuthProvider(cfg.id, this.deps.oauth, { redirectUrl: redirectUrl ?? registered ?? 'http://127.0.0.1/callback', interactive, openExternal: this.deps.openExternal, onState })
   }
 
@@ -187,10 +187,11 @@ export class McpHost implements ToolProvider {
   }
 
   private async runAuthorize(id: string, l: Live): Promise<{ ok: boolean; error?: string }> {
-    const cb = await startCallbackServer(this.deps.oauth!.get(id).port)
+    const oauthState = await this.deps.oauth!.get(id)
+    const cb = await startCallbackServer(oauthState.port)
     try {
-      const provider = this.providerFor(l.cfg, true, cb.redirectUrl, (s) => cb.setExpectedState(s))!
-      this.deps.oauth!.update(id, { port: cb.port })
+      const provider = (await this.providerFor(l.cfg, true, cb.redirectUrl, (s) => cb.setExpectedState(s)))!
+      await this.deps.oauth!.update(id, { port: cb.port })
       const url = validateRemoteUrl(l.cfg.url)
       const headers = l.cfg.headers ?? {}
       let transport = this.makeHttpTransport('streamable', url, headers, provider)
@@ -227,11 +228,11 @@ export class McpHost implements ToolProvider {
 
   /** Forget stored OAuth credentials for a server and reconnect (it will show as needing sign-in). */
   async signOut(id: string): Promise<void> {
-    this.deps.oauth?.clear(id)
+    await this.deps.oauth?.clear(id)
     await this.restart(id)
   }
 
-  accessToken(id: string): string | undefined {
+  async accessToken(id: string): Promise<string | undefined> {
     return this.deps.oauth?.accessToken(id)
   }
 
@@ -326,7 +327,7 @@ export type AcpMcpServer =
  * OAuth servers are passed with their current access token (Vibe has no access to our token store),
  * so they only work while that token is valid; servers that are not signed in yet are skipped.
  */
-export function toAcpServers(configs: McpServerConfig[], accessToken?: (id: string) => string | undefined): AcpMcpServer[] {
+export async function toAcpServers(configs: McpServerConfig[], accessToken?: (id: string) => Promise<string | undefined>): Promise<AcpMcpServer[]> {
   const out: AcpMcpServer[] = []
   for (const c of configs) {
     if (!c.enabled) continue
@@ -338,7 +339,7 @@ export function toAcpServers(configs: McpServerConfig[], accessToken?: (id: stri
       }
       const headers = { ...(c.headers ?? {}) }
       if (c.oauth) {
-        const t = accessToken?.(c.id)
+        const t = await accessToken?.(c.id)
         if (!t) continue
         headers.Authorization = `Bearer ${t}`
       }

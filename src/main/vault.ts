@@ -19,9 +19,10 @@ export class SecretVault {
     return join(this.dir, 'vault.json')
   }
 
-  private read(): Record<string, unknown> {
+  private async read(): Promise<Record<string, unknown>> {
     try {
-      if (this.crypto.available() && existsSync(this.encFile)) return JSON.parse(this.crypto.decrypt(readFileSync(this.encFile))) as Record<string, unknown>
+      const available = await this.crypto.available()
+      if (available && existsSync(this.encFile)) return JSON.parse(await this.crypto.decrypt(readFileSync(this.encFile))) as Record<string, unknown>
       if (existsSync(this.plainFile)) return JSON.parse(readFileSync(this.plainFile, 'utf8')) as Record<string, unknown>
     } catch {
       /* unreadable or undecryptable: treat as empty rather than crash */
@@ -29,29 +30,31 @@ export class SecretVault {
     return {}
   }
 
-  private write(map: Record<string, unknown>): void {
+  private async write(map: Record<string, unknown>): Promise<void> {
     mkdirSync(this.dir, { recursive: true })
     const json = JSON.stringify(map)
-    const [file, data, other] = this.crypto.available() ? [this.encFile, this.crypto.encrypt(json), this.plainFile] : [this.plainFile, json, this.encFile]
+    const available = await this.crypto.available()
+    const [file, data, other] = available ? [this.encFile, await this.crypto.encrypt(json), this.plainFile] : [this.plainFile, json, this.encFile]
     const tmp = `${file}.tmp`
     writeFileSync(tmp, data, { mode: 0o600 })
     renameSync(tmp, file)
     if (existsSync(other)) unlinkSync(other)
   }
 
-  get<T = unknown>(key: string): T | undefined {
-    return this.read()[key] as T | undefined
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    const m = await this.read()
+    return m[key] as T | undefined
   }
-  set(key: string, value: unknown): void {
-    const m = this.read()
+  async set(key: string, value: unknown): Promise<void> {
+    const m = await this.read()
     m[key] = value
-    this.write(m)
+    await this.write(m)
   }
-  delete(key: string): void {
-    const m = this.read()
+  async delete(key: string): Promise<void> {
+    const m = await this.read()
     if (key in m) {
       delete m[key]
-      this.write(m)
+      await this.write(m)
     }
   }
 }

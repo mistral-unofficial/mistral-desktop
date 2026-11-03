@@ -198,7 +198,7 @@ export interface CodeMode {
 }
 
 export type CodeStartResult =
-  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string; canResume: boolean }
+  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string; canResume: boolean; /** The agent's id for this (new, still empty) session. */ sessionId: string }
   | { status: 'needs-auth'; id: string; authMethods: { id: string; name: string; description?: string }[]; message: string }
   | { status: 'error'; message: string }
 

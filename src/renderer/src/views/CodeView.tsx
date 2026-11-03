@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption } from '@shared/types'
 import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
 import { Collapsible, Diff, Markdown, PlainText } from '../components'
+import { mergePending, type PendingSession } from '../sessions'
 import { SidebarPortal } from '../sidebar'
 import { WorkspaceList, folderName } from './WorkspaceList'
 
@@ -12,6 +13,9 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const [folder, setFolder] = useState<string>()
   const [workspaces, setWorkspaces] = useState<CodeWorkspace[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string>()
+  // Sessions the user has started that Vibe has not listed yet: shown in the sidebar from the first message on.
+  const [pending, setPending] = useState<PendingSession[]>([])
+  const [notice, setNotice] = useState('')
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<Status>('idle')
@@ -70,7 +74,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const adopt = (r: CodeStartResult): void => {
     if (r.status === 'ready') {
       idRef.current = r.id
-      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setCanResume(r.canResume); setShowHistory(false); setSessions(null)
+      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setCanResume(r.canResume); setShowHistory(false); setSessions(null); setActiveSessionId(r.sessionId)
       for (const e of buffered.current.get(r.id) ?? []) handle(e)
       buffered.current.delete(r.id)
       void refreshWorkspaces()
@@ -102,6 +106,11 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     const text = input.trim()
     if (!text || busy || status !== 'ready' || !idRef.current) return
     setState((s) => ({ ...s, items: [...s.items, { kind: 'user', text }] }))
+    // First message of a new session: list it in the sidebar now, not when the agent has finished.
+    if (folder && activeSessionId && !workspaces.some((w) => w.sessions.some((x) => x.sessionId === activeSessionId))) {
+      const title = text.split('\n')[0]!.slice(0, 60)
+      setPending((p) => (p.some((x) => x.session.sessionId === activeSessionId) ? p : [...p, { path: folder, session: { sessionId: activeSessionId, title, updatedAt: new Date().toISOString() } }]))
+    }
     setInput(''); setBusy(true)
     void window.api.code.prompt(idRef.current, text)
   }
@@ -125,7 +134,47 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     setShowHistory(false)
     await load(idRef.current, sessionId)
   }
-  const matches = workspaces
+  const shown = useMemo(() => mergePending(workspaces, pending), [workspaces, pending])
+  // Once Vibe lists a session, the local stand-in is no longer needed.
+  useEffect(() => {
+    const listed = new Set(workspaces.flatMap((w) => w.sessions.map((x) => x.sessionId)))
+    setPending((p) => (p.some((x) => listed.has(x.session.sessionId)) ? p.filter((x) => !listed.has(x.session.sessionId)) : p))
+  }, [workspaces])
+  // Vibe names the session after its first answer: follow that title while the stand-in is shown.
+  useEffect(() => {
+    const t = state.title
+    if (t && activeSessionId) setPending((p) => (p.some((x) => x.session.sessionId === activeSessionId && x.session.title !== t) ? p.map((x) => (x.session.sessionId === activeSessionId ? { ...x, session: { ...x.session, title: t } } : x)) : p))
+  }, [state.title, activeSessionId])
+
+  const renameSession = async (_path: string, s: CodeSessionInfo, title: string): Promise<void> => {
+    const apply = (t: string): void => {
+      const map = (x: CodeSessionInfo): CodeSessionInfo => (x.sessionId === s.sessionId ? { ...x, title: t } : x)
+      setWorkspaces((ws) => ws.map((w) => ({ ...w, sessions: w.sessions.map(map) })))
+      setPending((p) => p.map((x) => ({ ...x, session: map(x.session) })))
+    }
+    setNotice('')
+    apply(title)
+    const err = await window.api.code.renameSession(s.sessionId, title)
+    if (err) { apply(s.title); setNotice(`Could not rename: ${err}`) }
+    void refreshWorkspaces()
+  }
+  const deleteSession = async (path: string, s: CodeSessionInfo): Promise<void> => {
+    if (!window.confirm(`Delete "${s.title}"? This cannot be undone.`)) return
+    setNotice('')
+    const wasPending = pending.some((x) => x.session.sessionId === s.sessionId)
+    if (folder === path && activeSessionId === s.sessionId) {
+      // The open session: leave it (the agent is stopped by the delete) and go back to the overview.
+      idRef.current = undefined
+      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setBusy(false); setActiveSessionId(undefined)
+    }
+    setWorkspaces((ws) => ws.map((w) => ({ ...w, sessions: w.sessions.filter((x) => x.sessionId !== s.sessionId) })))
+    setPending((p) => p.filter((x) => x.session.sessionId !== s.sessionId))
+    const err = await window.api.code.deleteSession(s.sessionId)
+    if (err && !wasPending) setNotice(`Could not delete: ${err}`) // a session Vibe never stored has nothing to delete
+    void refreshWorkspaces()
+  }
+
+  const matches = shown
     .map((w) => ({ ...w, sessions: w.sessions.filter((x) => !query.trim() || (x.title + ' ' + w.path).toLowerCase().includes(query.trim().toLowerCase())) }))
     .filter((w) => !query.trim() || w.sessions.length || w.path.toLowerCase().includes(query.trim().toLowerCase()))
   const answer = (p: Perm, optionId: string | null): void => {
@@ -141,7 +190,8 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg> Search
         </button>
       </div>
-      <WorkspaceList workspaces={workspaces} variant="side" activeFolder={folder} activeSessionId={activeSessionId} onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} />
+      <WorkspaceList workspaces={shown} variant="side" activeFolder={folder} activeSessionId={activeSessionId} onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} />
+      {notice && <p className="warnline" role="alert">{notice}</p>}
     </SidebarPortal>
   )
   const searchDialog = searching && (
@@ -178,7 +228,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
           <h2>Code</h2>
           <p className="muted">Pick a project folder. Mistral Vibe runs inside it and can read and edit files there.</p>
           <button className="primary" onClick={() => void choose()}>Choose folder…</button>
-          {!!workspaces.length && <WorkspaceList workspaces={workspaces} variant="cards" onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} />}
+          {!!shown.length && <WorkspaceList workspaces={shown} variant="cards" onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} onRename={(p, x, t) => void renameSession(p, x, t)} onDelete={(p, x) => void deleteSession(p, x)} />}
         </div>
       </>
     )

@@ -181,3 +181,8 @@ select.warn { border-color: var(--warn); color: var(--warn); }
 .meter span { display: block; height: 100%; background: var(--accent); }
 .limitnote { margin: 0; font-size: 12px; }
 .okline { color: var(--ok); font-size: 13px; margin: 6px 0; }
+.ctxmenu { position: fixed; z-index: 200; list-style: none; margin: 0; padding: 4px; min-width: 150px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, .28); }
+.ctxmenu button { width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 5px; }
+.ctxmenu button:hover, .ctxmenu button:focus-visible { background: var(--bg3); outline: none; }
+.ctxmenu .danger-item { color: var(--err); }
+.wsrename { width: 100%; padding: 4px 6px; }
