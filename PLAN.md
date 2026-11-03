@@ -4,13 +4,41 @@ A desktop app that behaves like Claude Desktop but runs on Mistral: a **Chat** t
 
 ## Decisions
 - **Shell:** Electron + TypeScript + React.
-- **Auth:** support both a Mistral **API key** and **subscription login via OAuth**.
-- **Code tab engine:** Mistral **Vibe CLI** over ACP (`vibe-acp`), not a custom agent loop.
+- **Auth:** support a Mistral **API key** and **browser sign-in** (see findings: Vibe's browser sign-in mints an API key; no public third-party subscription-OAuth was found).
+- **Code tab engine:** Mistral **Vibe CLI** over ACP (`vibe-acp`), not a custom agent loop; `vibe-app-server` is the fallback if ACP is too limited.
 
-## Open questions (resolve in Milestone 0)
-1. **Subscription OAuth.** We found no public documentation of an OAuth flow that lets a third-party app use a Le Chat plan. Docs only describe API keys (`~/.vibe/.env`, `vibe --setup`). Need to determine: does Vibe have a login command or token store? Does Mistral publish an OAuth client / device-code flow? Can the resulting token call chat completions? If not possible, subscription login is limited to the Code tab (delegated to Vibe) and Chat stays API-key only. Do not reverse-engineer Le Chat's web session.
-2. **Vibe OAuth for MCP.** English docs say `[mcp_servers.auth] type = "oauth"` is supported; French docs say it isn't yet. Verify against the installed version.
-3. **ACP surface.** Confirm which ACP features `vibe-acp` implements (permission requests, diffs, terminal, session resume, MCP server passthrough).
+## Findings from reading mistral-vibe (v3.0.4, Apache-2.0, Python >=3.12)
+Source: https://github.com/mistralai/mistral-vibe (read at commit 338ad4b).
+
+**Three entry points** (`pyproject.toml`): `vibe` (TUI / `--prompt` headless), `vibe-acp` (Agent Client Protocol over stdio), `vibe-app-server` (JSON-RPC 2.0 over stdio, documented in `docs/reference/app-server-protocol.md` and ADR 0009).
+
+**Integration options for the Code tab**
+| Option | Pros | Cons |
+|---|---|---|
+| `vibe-acp` | Open standard; `load_session`, list/fork/close sessions, images, embedded context; `new_session(cwd, mcp_servers)` accepts stdio/HTTP/SSE MCP servers, so app-managed MCP servers can be passed straight in | Only what ACP exposes |
+| `vibe-app-server` | Richest: turn queue and steering, interrupt, session resume/fork, history, config read/write, setup/credential endpoints, MCP add/auth, worktrees, client-provided tools. Mistral's own desktop clients use it (README mentions "Le Chat Desktop" creating worktrees) | Newer, Mistral-specific, "current dispatcher still contains coupling" per its own docs; protocol may change |
+| `vibe --prompt --output streaming` | Trivial | One-shot, no interactive permission prompts (only `--auto-approve`) |
+
+**Decision:** start with **ACP** (stable, standard), wrap it behind our own `CodeBackend` interface, and evaluate app-server as a second backend if ACP is too limited (e.g. turn queueing).
+
+**Auth, the key finding:** Vibe's browser sign-in (`vibe --setup` → "Launch browser") is *not* a subscription token flow. It starts a PKCE process against `console`/`auth.mistral.ai` (`POST {api}/vibe/sign-in`, poll, then exchange) and the result is **a Mistral API key** persisted to `~/.vibe/.env` or the keyring. So "subscription login" in practice means: sign in through the browser, get an API key minted for your workspace. There is also an experimental OIDC mode (`VIBE_CLI_OIDC_ENABLED=1`, first-party public client IDs hardcoded for Mistral) intended for Mistral's own clients. We must not borrow Mistral's first-party client IDs for our app.
+- ACP exposes this flow: `initialize` returns `auth_methods` (browser sign-in, optional terminal `vibe --setup`); `authenticate(method_id)` completes it. The Code tab can therefore offer "Sign in with Mistral" without handling credentials itself.
+- Chat tab: the same API key works against `api.mistral.ai`. Plan: (a) paste API key, (b) "Sign in with Mistral" reusing Vibe's credential store after Vibe has signed in (read key from keyring / `~/.vibe/.env`, with user consent), (c) a real third-party OAuth flow only if Mistral publishes one. Whether a Le Chat consumer plan includes API/Vibe usage is a billing question to confirm with Mistral, not something the code can settle.
+
+**Other facts that shape the design**
+- MCP in Vibe: `[[mcp_servers]]` in `config.toml` (stdio / http / streamable-http), `vibe mcp add`, per-server `auth` (`static` or `oauth`, tokens in OS keyring). English README documents OAuth MCP; the French docs' "no OAuth yet" note appears stale. Still verify at runtime.
+- Config is layered: project `./.vibe/config.toml` over `~/.vibe/`. Custom home via env var (README "Custom Vibe Home Directory"), which lets the app run Vibe with an isolated `VIBE_HOME` if we want to keep app state separate.
+- Folder trust: Vibe asks before trusting a folder containing `.vibe/`. The app must surface this prompt (or pre-trust via app-server workspace-trust ops).
+- Permissions: agents `accept-edits` (default) etc.; `--auto-approve` exists, we should not enable it by default. Per-tool permission config available.
+- Sandbox: app-server supports a sandboxed workspace mode (file/shell tools in the sandbox). Worth evaluating later for real isolation; cwd alone is not a sandbox.
+- Distribution: Vibe is Python. The app should detect an installed `vibe`/`vibe-acp` (PATH, `uv tool`), or install it via the official one-line installer / `uv tool install mistral-vibe` with user consent. The repo also ships PyInstaller specs (`vibe-acp.spec`, `vibe-app-server.spec`), so bundling a frozen binary is possible. Check license and size before deciding.
+- Overlap: Mistral appears to ship its own "Le Chat Desktop" with a Code mode. Confirm what exists before investing, and position this project accordingly (open-source, MCPB-first, API-key friendly).
+
+## Remaining open questions (Milestone 0)
+1. Run `vibe-acp` from a script: confirm `session/prompt` streaming, permission requests, diffs, and that `mcp_servers` passthrough works for stdio servers.
+2. Confirm the `authenticate` browser method works when the client is not an editor (needs `browser-auth-delegated` client meta?). Read `vibe/acp/auth.py` `browser_methods`.
+3. Does a Le Chat plan grant API access? Ask Mistral / check console billing.
+4. Check MCPB manifest spec version and whether a Node-based MCPB server can be handed to ACP as an ordinary stdio server (expected: yes).
 
 ## Architecture
 ```
@@ -53,11 +81,11 @@ Main and renderer talk through a typed IPC layer (contextIsolation on, no node i
 3. **MCP host:** manual stdio servers, tool calls in Chat.
 4. **MCPB:** install, config prompts, update and remove.
 5. **Code tab:** folder picker, ACP client, diffs, permissions, session resume, MCP passthrough.
-6. **OAuth:** implement whichever flow Milestone 0 confirms; otherwise document the limitation.
+6. **Browser sign-in:** drive Vibe's ACP `authenticate` flow; reuse the resulting key for Chat.
 7. **Polish:** auto-update, crash reporting opt-in, onboarding, signed builds.
 
 ## Risks
-- Subscription auth may not be available to third-party apps (biggest risk, see Open question 1).
+- Subscription auth may not be available to third-party apps (biggest risk; see Findings, Auth).
 - Vibe is young and ACP coverage or flags may change between versions; pin and test a supported version range.
 - Mistral's tool-calling quality differs from Claude's; keep the tool loop simple and surface errors clearly.
 
