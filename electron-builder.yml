@@ -1,0 +1,50 @@
+appId: com.mistral.desktop
+productName: Mistral Desktop
+copyright: Copyright © 2026
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+
+# Files that must be real files on disk (spawned binaries, native modules)
+asarUnpack:
+  - '**/*.node'
+
+icon: build/app-icon@2.png
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/app-icon@2.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # Unsigned by default. For distribution, set CSC_LINK / CSC_KEY_PASSWORD and
+  # APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID, then enable:
+  # notarize: true
+  identity: null
+
+win:
+  icon: build/app-icon@2.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  icon: build/app-icon@2.png
+  category: Development
+  target:
+    - AppImage
+    - deb
