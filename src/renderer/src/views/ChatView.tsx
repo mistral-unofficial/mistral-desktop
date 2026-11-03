@@ -1,0 +1,171 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ChatEvent, Conversation, DisplayItem, McpServerStatus, SettingsView } from '@shared/types'
+import { applyChatEvent, newConversation, settleInterrupted, titleFrom } from '../chatState'
+import { Collapsible, RichText } from '../components'
+
+type Summary = Pick<Conversation, 'id' | 'title' | 'updatedAt'>
+
+export function ChatView({ goSettings, active }: { goSettings: () => void; active: boolean }) {
+  const [settings, setSettings] = useState<SettingsView>()
+  const [models, setModels] = useState<string[]>([])
+  const [list, setList] = useState<Summary[]>([])
+  const [conv, setConv] = useState<Conversation>(() => newConversation(''))
+  const [input, setInput] = useState('')
+  const [requestId, setRequestId] = useState<string | null>(null)
+  const [autoApprove, setAutoApprove] = useState(false)
+  const [mcp, setMcp] = useState<McpServerStatus[]>([])
+  const reqRef = useRef<string | null>(null)
+  const autoRef = useRef(false)
+  const bottom = useRef<HTMLDivElement>(null)
+  autoRef.current = autoApprove
+  const streaming = requestId !== null
+
+  const refreshList = useCallback(() => void window.api.conversations.list().then(setList), [])
+
+  // Settings (API key, default model) can change in the Settings tab: re-read whenever this tab is shown.
+  useEffect(() => {
+    if (!active) return
+    void window.api.settings.get().then((s) => {
+      setSettings(s)
+      setConv((c) => (c.model ? c : { ...c, model: s.model }))
+    })
+    void window.api.chat.models().then(setModels)
+    void window.api.mcp.status().then(setMcp)
+  }, [active])
+
+  useEffect(() => {
+    refreshList()
+    const offMcp = window.api.mcp.onChange(setMcp)
+    const off = window.api.chat.onEvent((rid: string, e: ChatEvent) => {
+      if (rid !== reqRef.current) return
+      if (e.type === 'tool_pending' && autoRef.current) void window.api.chat.approve(e.id, true)
+      if (e.type === 'wire') setConv((c) => ({ ...c, wire: [...c.wire, ...e.messages] }))
+      else if (e.type === 'done') {
+        reqRef.current = null
+        setRequestId(null)
+      } else {
+        setConv((c) => ({ ...c, items: applyChatEvent(c.items, e) }))
+        if (e.type === 'error') {
+          reqRef.current = null
+          setRequestId(null)
+        }
+      }
+    })
+    return () => (off(), offMcp())
+  }, [refreshList])
+
+  // Persist when a turn settles (not on every streamed token).
+  useEffect(() => {
+    if (!streaming && conv.items.length) {
+      const saved = { ...conv, items: settleInterrupted(conv.items), updatedAt: Date.now() }
+      void window.api.conversations.save(saved).then(refreshList)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming])
+
+  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [conv.items])
+
+  const send = (): void => {
+    const text = input.trim()
+    if (!text || streaming) return
+    const rid = crypto.randomUUID()
+    const wire = [...conv.wire, { role: 'user' as const, content: text }]
+    const next: Conversation = { ...conv, title: conv.items.length ? conv.title : titleFrom(text), items: [...settleInterrupted(conv.items), { kind: 'user', text }], wire }
+    setConv(next)
+    setInput('')
+    reqRef.current = rid
+    setRequestId(rid)
+    void window.api.chat.send({ requestId: rid, messages: wire, model: conv.model })
+  }
+
+  const open = async (id: string): Promise<void> => {
+    const c = await window.api.conversations.get(id)
+    if (c) setConv(c)
+  }
+  const remove = async (id: string): Promise<void> => {
+    await window.api.conversations.remove(id)
+    if (id === conv.id) setConv(newConversation(conv.model))
+    refreshList()
+  }
+
+  const connected = mcp.filter((m) => m.state === 'connected')
+  const toolCount = connected.reduce((n, m) => n + m.tools.length, 0)
+
+  return (
+    <div className="split">
+      <aside className="sidebar">
+        <button className="primary wide" disabled={streaming} onClick={() => setConv(newConversation(conv.model))}>＋ New chat</button>
+        <ul className="convlist">
+          {list.map((c) => (
+            <li key={c.id} className={c.id === conv.id ? 'active' : ''}>
+              <button className="convbtn" disabled={streaming} onClick={() => void open(c.id)} title={c.title}>{c.title}</button>
+              <button className="iconbtn" aria-label={`Delete ${c.title}`} disabled={streaming} onClick={() => void remove(c.id)}>✕</button>
+            </li>
+          ))}
+        </ul>
+      </aside>
+      <div className="content">
+        <header className="bar">
+          <label>Model{' '}
+            <select value={conv.model} disabled={streaming || !!conv.items.length} onChange={(e) => setConv({ ...conv, model: e.target.value })}>
+              {[...new Set([conv.model, ...models])].filter(Boolean).map((m) => <option key={m}>{m}</option>)}
+            </select>
+          </label>
+          <span className="muted">{toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'} from ${connected.length} MCP server${connected.length === 1 ? '' : 's'}` : 'No MCP tools'}</span>
+          <label className="check" title="Run tool calls without asking. Only enable for servers you trust.">
+            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} /> Auto-approve tools
+          </label>
+        </header>
+        {settings && !settings.hasApiKey && (
+          <div className="banner">No Mistral API key yet. <button className="linklike" onClick={goSettings}>Add one in Settings</button> to start chatting.</div>
+        )}
+        <div className="messages" aria-live="polite">
+          {!conv.items.length && <div className="empty">Ask anything. Tools from your MCP servers are available to the model.</div>}
+          {conv.items.map((it, i) => <ChatItem key={i} item={it} />)}
+          {streaming && <div className="muted thinking">…</div>}
+          <div ref={bottom} />
+        </div>
+        <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
+          <textarea
+            value={input}
+            placeholder="Message Mistral…  (Enter to send, Shift+Enter for a new line)"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
+            rows={2}
+          />
+          {streaming
+            ? <button type="button" className="danger" onClick={() => void window.api.chat.cancel(reqRef.current!)}>Stop</button>
+            : <button type="submit" className="primary" disabled={!input.trim()}>Send</button>}
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function ChatItem({ item }: { item: DisplayItem }) {
+  switch (item.kind) {
+    case 'user': return <div className="msg user"><RichText text={item.text} /></div>
+    case 'assistant': return <div className="msg assistant"><RichText text={item.text} /></div>
+    case 'error': return <div className="msg error" role="alert">{item.text}</div>
+    case 'tool': return <ToolCard item={item} />
+  }
+}
+
+function ToolCard({ item }: { item: Extract<DisplayItem, { kind: 'tool' }> }) {
+  const pretty = (() => { try { return JSON.stringify(JSON.parse(item.args), null, 2) } catch { return item.args } })()
+  return (
+    <div className={`toolcard ${item.status}`}>
+      <div className="toolhead">
+        <strong>{item.server}</strong> › {item.tool} <span className={`badge ${item.status}`}>{item.status}</span>
+      </div>
+      <pre className="toolargs">{pretty}</pre>
+      {item.status === 'pending' && (
+        <div className="row">
+          <button className="primary" onClick={() => void window.api.chat.approve(item.id, true)}>Allow</button>
+          <button onClick={() => void window.api.chat.approve(item.id, false)}>Deny</button>
+        </div>
+      )}
+      {item.result !== undefined && <Collapsible summary="Result"><pre className="toolargs">{item.result}</pre></Collapsible>}
+    </div>
+  )
+}
