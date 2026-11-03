@@ -34,11 +34,21 @@ Source: https://github.com/mistralai/mistral-vibe (read at commit 338ad4b).
 - Distribution: Vibe is Python. The app should detect an installed `vibe`/`vibe-acp` (PATH, `uv tool`), or install it via the official one-line installer / `uv tool install mistral-vibe` with user consent. The repo also ships PyInstaller specs (`vibe-acp.spec`, `vibe-app-server.spec`), so bundling a frozen binary is possible. Check license and size before deciding.
 - Overlap: Mistral appears to ship its own "Le Chat Desktop" with a Code mode. Confirm what exists before investing, and position this project accordingly (open-source, MCPB-first, API-key friendly).
 
-## Remaining open questions (Milestone 0)
-1. Run `vibe-acp` from a script: confirm `session/prompt` streaming, permission requests, diffs, and that `mcp_servers` passthrough works for stdio servers.
-2. Confirm the `authenticate` browser method works when the client is not an editor (needs `browser-auth-delegated` client meta?). Read `vibe/acp/auth.py` `browser_methods`.
-3. Does a Le Chat plan grant API access? Ask Mistral / check console billing.
-4. Check MCPB manifest spec version and whether a Node-based MCPB server can be handed to ACP as an ordinary stdio server (expected: yes).
+## Milestone 0 results (spike in `spikes/acp/`, Vibe 3.0.4, mock LLM, no real key)
+Verified by driving `vibe-acp` over JSON-RPC from Node:
+- `initialize` OK. With no key and the default provider, `authMethods` = `[{id:"browser-auth", name:"Sign in through Mistral AI Studio"}]`; `session/new` fails with "Missing API key for mistral provider". With a configured key/provider, `authMethods` is `[]`. So the app should: call `initialize`, and if `browser-auth` is offered, show a sign-in button that calls `authenticate`. (Not exercised: needs a real Mistral account.)
+- `session/new {cwd, mcpServers}` OK. Returns modes `ask` / `accept-edits` (default) / `auto-approve`, available slash commands (`/compact`), and `configOptions`.
+- `session/prompt` streams `session/update` notifications: `agent_message_chunk`, `tool_call` / `tool_call_update` carrying `diff` content (path, newText), `usage_update` (tokens, context size), `session_info_update` (auto title), `user_message_chunk`. `stopReason: end_turn`. A `write_file` tool call really created the file inside the session cwd.
+- In `accept-edits` mode file writes ran without a permission request (as documented). Permission request handling for `ask` mode and for bash is **not yet tested**.
+- **MCP passthrough works, but differently than assumed:** a stdio server given in `mcpServers` shows up as connector `mcp_<name>` (e.g. `mcp_demo.echo`). In this harness MCP tools are *not* direct function-calling tools; the model finds them with `search_tool_functions` and calls them from `run_typescript`. Initialisation is asynchronous: a failure arrives later as an `agent_message_chunk` ("MCP server 'demo' failed to connect: mcp_transport_failed"). The UI must surface that, and should wait or show a "connecting" state before the first prompt. Consequence: how well Mistral models use MCP tools in the Code tab depends on this code-mode flow.
+- Custom OpenAI-compatible providers work (`[[providers]]` / `[[models]]` in `config.toml`) but must stream `usage` in the last chunk. Useful for tests and for future non-Mistral endpoints.
+
+Not yet answered:
+1. Real `authenticate` browser flow outside an editor (needs a Mistral account; check the `browser-auth-delegated` client meta flag in `vibe/acp/auth.py`).
+2. Whether a Le Chat plan grants API access (billing question for Mistral).
+3. MCPB manifest spec version and variable substitution; expected to map to a plain stdio `mcpServers` entry.
+4. Permission-request round trip in `ask` mode, `session/load` resume, cancel.
+5. Compare `vibe-app-server` for turn queueing and richer config if ACP proves limiting.
 
 ## Architecture
 ```

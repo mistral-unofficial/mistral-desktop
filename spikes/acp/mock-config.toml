@@ -1,0 +1,13 @@
+active_model = "mock"
+
+[[providers]]
+name = "mockprov"
+api_base = "http://127.0.0.1:8799/v1"
+api_key_env_var = "MOCK_KEY"
+api_style = "openai"
+backend = "generic"
+
+[[models]]
+name = "mock-model"
+provider = "mockprov"
+alias = "mock"
