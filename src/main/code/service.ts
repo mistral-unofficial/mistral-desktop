@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { BrowserSignInResult, CodeConfigResult, CodeEvent, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
 import type { SettingsStore } from '../settings'
 import { readVibeApiKey } from '../vibe-credentials'
+import { listProjectFiles, type ProjectFiles } from './files'
 import { AcpClient, AcpError, type AcpAuthMethod } from './acp-client'
 import { normalizeConfigOptions } from '../../shared/config-options'
 import { createWorktree, describeWorktree, removeWorktree } from './git-worktree'
@@ -21,6 +22,8 @@ interface Session {
   canList: boolean
   canLoad: boolean
   canClose: boolean
+  /** Project file list for `@` completion, reused for a few seconds. */
+  filesCache?: { at: number; result: Promise<ProjectFiles> }
   /** While a stored session loads, its replayed updates are collected here instead of being emitted. */
   replay: (Record<string, unknown> & { sessionUpdate: string })[] | null
 }
@@ -319,11 +322,20 @@ export class CodeService {
     }
   }
 
+  /** Files and folders of the session's project for `@` completion (git-aware, cached for a few seconds). */
+  listFiles(id: string): Promise<ProjectFiles> {
+    const sess = this.sessions.get(id)
+    if (!sess) return Promise.resolve({ entries: [], truncated: false })
+    if (!sess.filesCache || Date.now() - sess.filesCache.at > 5000) sess.filesCache = { at: Date.now(), result: listProjectFiles(sess.cwd) }
+    return sess.filesCache.result
+  }
+
   prompt(id: string, text: string): void {
     const sess = this.sessions.get(id)
     if (!sess?.acpSessionId) return this.emit(id, { type: 'error', message: 'Session is not ready' })
     if (sess.busy) return this.emit(id, { type: 'error', message: 'A turn is already running' })
     sess.busy = true
+    // `@path` mentions are sent as plain text: Vibe itself attaches the mentioned files (inside the session folder).
     sess.client
       .prompt(sess.acpSessionId, text)
       .then((r) => this.emit(id, { type: 'turn-end', stopReason: r.stopReason }))

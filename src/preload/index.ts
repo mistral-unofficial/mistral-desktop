@@ -66,6 +66,7 @@ const api: Api = {
     start: (cwd) => inv('code:start', cwd),
     authenticate: (id, m) => inv('code:authenticate', id, m),
     prompt: (id, t) => inv('code:prompt', id, t),
+    listFiles: (id) => inv('code:listFiles', id),
     cancel: (id) => inv('code:cancel', id),
     setMode: (id, m) => inv('code:setMode', id, m),
     respondPermission: (id, r, o) => inv('code:permission', id, r, o),

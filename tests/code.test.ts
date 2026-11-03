@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -276,5 +276,31 @@ describe('CodeService with a fake ACP agent', () => {
   it('rejects a path that is not a folder', async () => {
     const { svc } = service('normal')
     expect(await svc.start('/definitely/not/here')).toMatchObject({ status: 'error' })
+  })
+})
+
+describe('@ file completion', () => {
+  it('lists the session folder for completion, and nothing for an unknown session', async () => {
+    const { svc } = service('normal')
+    const cwd = tmp()
+    mkdirSync(join(cwd, 'lib'))
+    writeFileSync(join(cwd, 'lib', 'x.ts'), '')
+    writeFileSync(join(cwd, 'top.md'), '')
+    const r = await svc.start(cwd)
+    if (r.status !== 'ready') throw new Error('not ready')
+    const files = await svc.listFiles(r.id)
+    expect(files.entries.map((e) => `${e.kind}:${e.path}`).sort()).toEqual(['file:lib/x.ts', 'file:top.md', 'folder:lib'])
+    expect(await svc.listFiles('nope')).toEqual({ entries: [], truncated: false })
+    svc.stopAll()
+  })
+
+  it('sends the prompt text unchanged (Vibe itself attaches @-mentioned files)', async () => {
+    const { svc, events, waitFor } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    svc.prompt(r.id, 'explain @src/a.ts')
+    await waitFor((e) => e.type === 'turn-end')
+    expect(events.some((e) => text(e).includes('echo: explain @src/a.ts'))).toBe(true)
+    svc.stopAll()
   })
 })

@@ -68,6 +68,8 @@ export interface Api {
     start(cwd: string): Promise<CodeStartResult>
     authenticate(id: string, methodId: string): Promise<CodeStartResult>
     prompt(id: string, text: string): Promise<void>
+    /** Files and folders of the session's project, for `@` completion. */
+    listFiles(id: string): Promise<{ entries: { path: string; kind: 'file' | 'folder' }[]; truncated: boolean }>
     cancel(id: string): Promise<void>
     setMode(id: string, modeId: string): Promise<void>
     respondPermission(id: string, requestId: string, optionId: string | null): Promise<void>

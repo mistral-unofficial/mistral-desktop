@@ -3,6 +3,7 @@ import type { CodeConfigOption, CodeEvent, CodeMode, CodeSessionInfo, CodeStartR
 import { normalizeConfigOptions } from '@shared/config-options'
 import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
 import { Collapsible, Diff, Markdown, PlainText } from '../components'
+import { MentionTextarea } from '../MentionTextarea'
 import { mergePending, type PendingSession } from '../sessions'
 import { SidebarPortal } from '../sidebar'
 import { WorkspaceList, folderName } from './WorkspaceList'
@@ -342,9 +343,8 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
         <div ref={bottom} />
       </div>
       <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
-        <textarea value={input} disabled={status !== 'ready'} rows={2} placeholder="Tell the agent what to do…  (Enter to send)"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
+        <MentionTextarea value={input} onChange={setInput} onSubmit={send} disabled={status !== 'ready'} placeholder="Tell the agent what to do…  (Enter to send, @ to attach files)"
+          sessionKey={`${folder}|${activeSessionId ?? ''}`} loadFiles={() => window.api.code.listFiles(idRef.current!)} />
         {busy
           ? <button type="button" className="danger" onClick={() => void window.api.code.cancel(idRef.current!)}>Stop</button>
           : <button type="submit" className="primary" disabled={status !== 'ready' || !input.trim()}>Send</button>}

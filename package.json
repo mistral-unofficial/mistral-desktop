@@ -15,7 +15,8 @@
     "check": "npm run typecheck && npm test",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:dir": "npm run build && electron-builder --dir"
+    "dist:dir": "npm run build && electron-builder --dir",
+    "e2e:mentions": "node e2e/mentions.cjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

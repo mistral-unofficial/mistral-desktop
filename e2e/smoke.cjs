@@ -64,7 +64,7 @@ const cleanup = () => servers.forEach((s) => s.kill())
   await page.getByText('No Mistral API key yet').waitFor()
   await page.getByPlaceholder(/Message Mistral/).fill('hello')
   await page.getByRole('button', { name: 'Send' }).click()
-  await page.getByText(/No API key set/).waitFor()
+  await page.getByText(/Not signed in/).first().waitFor()
   await shot('01-no-key')
 
   step('save a wrong key -> 401 message; then the right key')

@@ -7,6 +7,8 @@ http.createServer((req, res) => {
     const hasTool = msgs.some(m => m.role==='tool');
     if(!globalThis.d){globalThis.d=1;for(const t of j.tools||[]) if(/search_tool|run_typescript/.test(t.function.name)) console.error('[schema]',JSON.stringify(t.function).slice(0,900))}
     console.error('[mock] tools offered:', (j.tools||[]).map(t=>t.function.name).join(','), '| hasToolResult:', hasTool);
+    const lastUser = [...msgs].reverse().find(m => m.role==='user');
+    if (lastUser && (j.tools||[]).length) console.error('[user-message]', JSON.stringify(lastUser.content));
     res.writeHead(200, {'content-type':'text/event-stream'});
     const base = {id:'c1', object:'chat.completion.chunk', created:1, model:j.model};
     const names=(j.tools||[]).map(t=>t.function.name); const mcp=names.find(n=>/echo/.test(n));

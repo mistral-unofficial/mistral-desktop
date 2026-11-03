@@ -20,6 +20,7 @@ npm run build && npm start
   - **Remote servers**: a URL (streamable HTTP, with automatic fallback to legacy SSE), optional headers, and OAuth sign-in (*Sign in* opens your browser; tokens are kept in the keychain).
 - **Chat** renders Markdown (tables, lists, code blocks with a copy button). Raw HTML is shown as text, links open in your browser, images are not loaded.
 - **Code → History** lists earlier Vibe sessions for the current folder; pick one to continue it where you left off.
+- **Code → `@` file mentions**: type `@` in the prompt box to complete files and folders of the project, fuzzy-matched and ranked like the Vibe CLI (`@app` finds `src/app.ts`, `@btn` finds `Button.tsx`). Arrow keys move, Enter or Tab inserts, Esc closes. The list comes from git (tracked and untracked, not ignored) or a folder walk, so `.gitignore`d files do not show up. Vibe itself attaches the mentioned files; the app only completes the text in the syntax Vibe reads (names with spaces or characters like `+` are inserted quoted).
 
 ## How it fits together
 
@@ -39,7 +40,8 @@ renderer (React)  ──IPC (contextIsolation, typed in src/shared/api.ts)──
 
 ```bash
 npm run check        # typecheck + unit tests (vitest)
-VIBE_ACP=$(command -v vibe-acp) xvfb-run -a npm run e2e   # drives the real app with Playwright (needs Playwright, a display, vibe-acp)
+VIBE_ACP=$(command -v vibe-acp) xvfb-run -a npm run e2e:mentions   # `@` completion in the real app, with real vibe-acp
+VIBE_ACP=$(command -v vibe-acp) xvfb-run -a npm run e2e            # older full tour (see the note under Known gaps)
 ```
 
 The e2e test uses local mock servers instead of Mistral (`e2e/mock-mistral.mjs` for Chat, `e2e/mock-vibe-llm.mjs` for Vibe), so it needs no account or network. `spikes/acp/` holds the earlier protocol experiments.
@@ -51,6 +53,7 @@ The e2e test uses local mock servers instead of Mistral (`e2e/mock-mistral.mjs` 
 - **Remote MCP**: custom header values (e.g. a static `Authorization` token) are stored **unencrypted** in `settings.json`; prefer OAuth. OAuth is tested against a mock server (discovery, dynamic registration, PKCE, refresh), not a real provider. In the Code tab, OAuth servers are passed to Vibe with the *current* access token, so they stop working when it expires until the app refreshes it (restart the session).
 - In Vibe, MCP tools reach the model through its code-mode (`search_tool_functions` + `run_typescript`), not as direct tools. How well that works with Mistral models is untested.
 - **Session resume** replays the stored conversation but shows it as a flat history (no scroll-to-position); sessions are listed per folder and per Vibe home. Vibe must support `session/list` and `session/load` (3.0.4 does); otherwise the History button is hidden.
+- **`npm run e2e` (smoke.cjs) is out of date**: it was written before the account menu and Code sidebar and fails at its first steps on the current UI (e.g. two "Settings" buttons). `e2e:mentions` is current. Update smoke.cjs before relying on it.
 - Code tab: no terminal pane. The permission prompt UI is covered by unit tests, not by the e2e run.
 - Markdown has no syntax highlighting.
 - No packaging/auto-update/code signing yet. The Code agent's cwd is not a sandbox; use Vibe's `ask` mode to review actions.
