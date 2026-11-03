@@ -125,12 +125,17 @@ export class AcpClient extends EventEmitter {
     this.write({ id, error: { code: -32601, message: `Method not supported: ${method}` } })
   }
 
-  initialize(): Promise<{ authMethods?: AcpAuthMethod[]; agentInfo?: { name: string; version: string }; agentCapabilities?: AcpCapabilities }> {
-    return this.request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'mistral-desktop', version: '0.1.0' } })
+  /**
+   * `delegatedBrowserAuth` tells Vibe this client opens the sign-in page itself (in its own window), so Vibe
+   * offers the `browser-auth-delegated` method and hands back the URL instead of launching a system browser.
+   */
+  initialize(opts: { delegatedBrowserAuth?: boolean } = {}): Promise<{ authMethods?: AcpAuthMethod[]; agentInfo?: { name: string; version: string }; agentCapabilities?: AcpCapabilities }> {
+    const clientCapabilities = opts.delegatedBrowserAuth ? { _meta: { 'browser-auth-delegated': true } } : {}
+    return this.request('initialize', { protocolVersion: 1, clientCapabilities, clientInfo: { name: 'mistral-desktop', version: '0.1.0' } })
   }
 
-  authenticate(methodId: string): Promise<unknown> {
-    return this.request('authenticate', { methodId })
+  authenticate(methodId: string, extra: Record<string, unknown> = {}): Promise<{ _meta?: Record<string, Record<string, unknown>> } | null | undefined> {
+    return this.request('authenticate', { methodId, ...extra })
   }
 
   newSession(cwd: string, mcpServers: unknown[]): Promise<{ sessionId: string; modes?: AcpModes }> {

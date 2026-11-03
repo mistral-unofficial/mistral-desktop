@@ -14,7 +14,9 @@ export const DEFAULT_SETTINGS: Settings = {
   vibePath: '',
   vibeHome: '',
   mcpServers: [],
-  recentFolders: []
+  recentFolders: [],
+  profileName: '',
+  profileEmail: ''
 }
 
 function atomicWrite(path: string, data: string | Buffer, mode = 0o600): void {

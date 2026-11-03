@@ -160,6 +160,48 @@ describe('CodeService with a fake ACP agent', () => {
     svc.stopAll()
   })
 
+  it('lists recent folders with their stored sessions without an open session', async () => {
+    const a = tmp()
+    const { svc, settings } = service('normal', { recentFolders: [a, join(a, 'gone')] })
+    const ws = await svc.listWorkspaces()
+    expect(ws.map((w) => w.path)).toEqual([a]) // folders that no longer exist are dropped
+    expect(ws[0]!.sessions.map((x) => x.sessionId)).toEqual(['s1', 'old-2', 'old-1'])
+    expect(settings.get().recentFolders).toHaveLength(2)
+  })
+
+  it('delegated sign-in: the app opens the URL Vibe returns, then imports the key', async () => {
+    const { svc, settings } = service('signin')
+    const opened: string[] = []
+    let close!: () => void
+    const closed = new Promise<void>((r) => (close = r))
+    const svc2 = new CodeService(settings, () => undefined, async () => [], async () => 'key-from-vibe')
+    let closeCalls = 0
+    const r = await svc2.signInWithBrowser({ open: (url) => (opened.push(url), { closed, close: () => (closeCalls++, close()) }) })
+    expect(r).toEqual({ ok: true })
+    expect(closeCalls).toBeGreaterThan(0) // the window is closed once sign-in is done
+    expect(opened).toEqual(['https://auth.example/sign-in?x=1'])
+    expect(settings.getApiKey()).toBe('key-from-vibe')
+    void svc
+  })
+
+  it('delegated sign-in: closing the window right after finishing still counts (grace period)', async () => {
+    const { settings } = service('signin')
+    const svc = new CodeService(settings, () => undefined, async () => [], async () => 'never')
+    const r = await svc.signInWithBrowser({ open: () => ({ closed: Promise.resolve(), close: () => undefined }) })
+    expect(r.ok).toBe(true)
+    expect(settings.getApiKey()).toBe('never')
+  })
+
+  it('delegated sign-in: a failed exchange reports the error and still closes the window', async () => {
+    const { settings } = service('signinfail')
+    const svc = new CodeService(settings, () => undefined, async () => [], async () => 'x')
+    let closed = 0
+    const r = await svc.signInWithBrowser({ open: () => ({ closed: new Promise<void>(() => undefined), close: () => void closed++ }) })
+    expect(r).toEqual({ ok: false, error: 'Sign-in exchange failed' })
+    expect(closed).toBe(1)
+    expect(settings.getApiKey()).toBeUndefined()
+  })
+
   it('rejects a path that is not a folder', async () => {
     const { svc } = service('normal')
     expect(await svc.start('/definitely/not/here')).toMatchObject({ status: 'error' })

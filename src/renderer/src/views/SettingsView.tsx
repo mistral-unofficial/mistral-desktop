@@ -9,6 +9,9 @@ export function SettingsView() {
   const [status, setStatus] = useState<McpServerStatus[]>([])
   const [importText, setImportText] = useState('')
   const [note, setNote] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+  const [signInError, setSignInError] = useState('')
+  const [signInOk, setSignInOk] = useState<{ web?: boolean }>()
 
   useEffect(() => {
     void window.api.settings.get().then(setS)
@@ -21,6 +24,17 @@ export function SettingsView() {
   const setServers = (servers: McpServerConfig[]): Promise<void> => patch({ mcpServers: servers })
   const edit = (id: string, p: Partial<McpServerConfig>): Promise<void> => setServers(s.mcpServers.map((m) => (m.id === id ? { ...m, ...p } : m)))
   const stat = (id: string): McpServerStatus | undefined => status.find((x) => x.id === id)
+
+  const signIn = async (): Promise<void> => {
+    setSigningIn(true)
+    setSignInError('')
+    setSignInOk(undefined)
+    const r = await window.api.settings.signInWithBrowser()
+    if (r.ok) setSignInOk({ web: r.web })
+    else setSignInError(r.error)
+    setS(await window.api.settings.get())
+    setSigningIn(false)
+  }
 
   const doImport = async (): Promise<void> => {
     try {
@@ -44,11 +58,24 @@ export function SettingsView() {
         <p className="muted">Used for Chat and passed to Vibe for Code. Create one at console.mistral.ai. {s.hasApiKey ? '✓ A key is set.' : 'No key set.'}</p>
         {s.insecureKeyStorage && <p className="warnline">No OS keychain available: the key is stored in a file readable only by your user.</p>}
         <div className="row">
+          <button className="primary" disabled={signingIn} onClick={() => void signIn()}>{signingIn ? 'Waiting for the browser…' : 'Sign in with Mistral'}</button>
+          <span className="muted">Opens your browser; no key to copy. Needs Vibe installed.</span>
+        </div>
+        {signInError && <p className="warnline">{signInError}</p>}
+        {signInOk && !signingIn && <p className="okline" role="status">✓ Signed in. Chat and Code now use your Mistral account.{signInOk.web === false && <span className="muted"> The web account (for budget) was not signed in; you can do that from the account menu.</span>}</p>}
+        <div className="row">
           <input type="password" autoComplete="off" value={key} placeholder={s.hasApiKey ? '•••••••• (enter a new key to replace)' : 'Paste API key'} onChange={(e) => setKey(e.target.value)} />
           <button className="primary" disabled={!key.trim()} onClick={async () => { setS(await window.api.settings.setApiKey(key)); setKey('') }}>Save</button>
-          {s.hasApiKey && <button onClick={async () => setS(await window.api.settings.clearApiKey())}>Remove</button>}
+          {s.hasApiKey && <button title="Removes the API key and the web login kept by this app. Vibe's own stored sign-in is left alone." onClick={async () => { setSignInOk(undefined); setS(await window.api.settings.signOut()) }}>Sign out</button>}
         </div>
-        <p className="muted">Browser sign-in is available in the Code tab when Vibe offers it. It creates a key for Vibe only.</p>
+        <p className="muted">Browser sign-in uses Vibe's flow, which creates an API key for your Mistral workspace and saves it here. Chat and Code then both use it.</p>
+      </section>
+
+      <section>
+        <h3>Profile</h3>
+        <p className="muted">Your name, email and organisation come from your Mistral web account once you are signed in there. Enter them here only as a fallback for when you are not. It stays on this computer.</p>
+        <label className="field">Name<input value={s.profileName} onChange={(e) => void patch({ profileName: e.target.value })} /></label>
+        <label className="field">Email<input type="email" value={s.profileEmail} onChange={(e) => void patch({ profileEmail: e.target.value })} /></label>
       </section>
 
       <section>

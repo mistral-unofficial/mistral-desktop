@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Api } from '../shared/api'
-import type { ChatEvent, CodeEvent, InstalledExtension, McpServerStatus } from '../shared/types'
+import type { AccountInfo, ChatEvent, CodeEvent, InstalledExtension, McpServerStatus } from '../shared/types'
 
 const inv = <T>(ch: string, ...a: unknown[]): Promise<T> => ipcRenderer.invoke(ch, ...a) as Promise<T>
 const sub = <A extends unknown[]>(ch: string, cb: (...a: A) => void): (() => void) => {
@@ -14,7 +14,15 @@ const api: Api = {
     get: () => inv('settings:get'),
     update: (p) => inv('settings:update', p),
     setApiKey: (k) => inv('settings:setApiKey', k),
-    clearApiKey: () => inv('settings:clearApiKey')
+    clearApiKey: () => inv('settings:clearApiKey'),
+    signInWithBrowser: () => inv('settings:signInWithBrowser'),
+    signOut: () => inv('settings:signOut')
+  },
+  account: {
+    get: () => inv('account:get'),
+    webSignIn: () => inv('account:webSignIn'),
+    webSignOut: () => inv('account:webSignOut'),
+    onUpdate: (cb) => sub<[AccountInfo]>('account:update', cb)
   },
   chat: {
     models: () => inv('chat:models'),
@@ -27,7 +35,8 @@ const api: Api = {
     list: () => inv('conv:list'),
     get: (id) => inv('conv:get', id),
     save: (c) => inv('conv:save', c),
-    remove: (id) => inv('conv:remove', id)
+    remove: (id) => inv('conv:remove', id),
+    search: (q) => inv('conv:search', q)
   },
   mcp: {
     status: () => inv('mcp:status'),
@@ -60,6 +69,7 @@ const api: Api = {
     stop: (id) => inv('code:stop', id),
     listSessions: (id) => inv('code:listSessions', id),
     resume: (id, sid) => inv('code:resume', id, sid),
+    workspaces: () => inv('code:workspaces'),
     onEvent: (cb) => sub<[string, CodeEvent]>('code:event', cb)
   }
 }

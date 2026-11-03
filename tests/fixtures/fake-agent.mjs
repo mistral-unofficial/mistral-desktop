@@ -10,10 +10,18 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
   const m = JSON.parse(l)
   if (m.method === 'initialize') {
     const caps = mode === 'noresume' ? {} : { loadSession: true, sessionCapabilities: { list: {}, close: {} } }
-    w({ id: m.id, result: { protocolVersion: 1, authMethods: mode === 'needsauth' ? [{ id: 'browser-auth', name: 'Sign in' }] : [], agentInfo: { name: 'fake', version: '1' }, agentCapabilities: caps } })
+    const delegated = m.params?.clientCapabilities?._meta?.['browser-auth-delegated'] === true
+    const methods = mode === 'needsauth' ? [{ id: 'browser-auth', name: 'Sign in' }] : (mode === 'signin' || mode === 'signinfail') ? [{ id: 'browser-auth', name: 'Sign in' }, ...(delegated ? [{ id: 'browser-auth-delegated', name: 'Sign in (delegated)' }] : [])] : []
+    w({ id: m.id, result: { protocolVersion: 1, authMethods: methods, agentInfo: { name: 'fake', version: '1' }, agentCapabilities: caps } })
   } else if (m.method === 'authenticate') {
     authed = true
-    w({ id: m.id, result: {} })
+    if (m.params.methodId === 'browser-auth-delegated' && m.params.action === 'start') {
+      w({ id: m.id, result: { _meta: { 'browser-auth-delegated': { attemptId: 'att-1', signInUrl: 'https://auth.example/sign-in?x=1' } } } })
+    } else if (m.params.methodId === 'browser-auth-delegated' && mode === 'signinfail') {
+      w({ id: m.id, error: { code: -32602, message: 'Sign-in exchange failed' } })
+    } else if (m.params.methodId === 'browser-auth-delegated') {
+      setTimeout(() => w({ id: m.id, result: { _meta: { 'browser-auth-delegated': { status: 'completed' } } } }), 100)
+    } else w({ id: m.id, result: {} })
   } else if (m.method === 'session/new') {
     if (!authed) return w({ id: m.id, error: { code: -32000, message: 'Missing API key for mistral provider.' } })
     process.stderr.write('mcp:' + JSON.stringify(m.params.mcpServers) + '\n')

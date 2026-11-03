@@ -29,12 +29,45 @@ export interface Settings {
   vibeHome: string
   mcpServers: McpServerConfig[]
   recentFolders: string[]
+  /** Shown in the sidebar footer. Mistral's API does not tell the app who you are, so you enter it. */
+  profileName: string
+  profileEmail: string
 }
 
 export interface SettingsView extends Settings {
   hasApiKey: boolean
   /** True when the OS keychain is unavailable and the key is stored with file permissions only. */
   insecureKeyStorage: boolean
+}
+
+/** `web` tells whether the app also holds a chat.mistral.ai session afterwards (needed for the budget). */
+export type BrowserSignInResult = { ok: true; web?: boolean } | { ok: false; error: string }
+
+/** Who is signed in on the website. */
+export interface AccountProfile {
+  name?: string
+  email?: string
+  organization?: string
+}
+
+/** From the website's `billing.budget`: how much of the monthly budget is used. */
+export interface AccountBudget {
+  /** 0 to 100. */
+  usagePercent: number
+  initialBudget: number
+  currency: string
+  /** ISO date when the budget resets. */
+  resetAt?: string
+}
+
+export interface AccountInfo {
+  /** From Vibe's account lookup; absent when signed out or the lookup failed. */
+  plan?: { name: string; type: string }
+  /** True when the app holds a chat.mistral.ai web session (needed for the budget). */
+  webSignedIn?: boolean
+  budget?: AccountBudget
+  /** From the website's `user.session`; present only with a web session. */
+  profile?: AccountProfile
 }
 
 export interface ToolCall {
@@ -66,6 +99,14 @@ export interface Conversation {
   items: DisplayItem[]
   /** Wire-level history, needed to continue the conversation including tool turns. */
   wire: WireMessage[]
+}
+
+/** A conversation matching a search; `snippet` is the matching message text when the title did not match. */
+export interface ConversationHit {
+  id: string
+  title: string
+  updatedAt: number
+  snippet?: string
 }
 
 export type ChatEvent =
@@ -179,6 +220,12 @@ export interface CodeSessionInfo {
   sessionId: string
   title: string
   updatedAt: string | null
+}
+
+/** A project folder the user has opened, with the stored sessions Vibe has for it (newest first). */
+export interface CodeWorkspace {
+  path: string
+  sessions: CodeSessionInfo[]
 }
 
 /** Result of resuming a stored session; `history` is the replayed `session/update` stream. */

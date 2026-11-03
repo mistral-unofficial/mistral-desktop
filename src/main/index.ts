@@ -5,6 +5,8 @@ import type { ChatEvent, Conversation, ExtensionPreview, McpServerConfig, Settin
 import { runChat } from './chat/run'
 import { listModels } from './chat/mistral'
 import { CodeService } from './code/service'
+import { AccountService } from './account'
+import { WebSession } from './web-session'
 import { ConversationStore } from './conversations'
 import { McpHost, toAcpServers } from './mcp/host'
 import { OAuthStore } from './mcp/oauth'
@@ -27,6 +29,7 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 480,
     title: 'Mistral Desktop',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 12 } } : {}),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -82,6 +85,8 @@ app.whenReady().then(async () => {
     send('ext:changed', extensions.list())
     resync()
   }
+  const web = new WebSession(() => win)
+  const account = new AccountService(fetch, web, join(dir, 'account-cache.json'), (info) => send('account:update', info))
   const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), (id) => mcp.accessToken(id)))
   resync()
 
@@ -92,8 +97,31 @@ app.whenReady().then(async () => {
     if (patch.mcpServers) resyncSoon()
     return settings.view()
   })
-  ipcMain.handle('settings:setApiKey', (_e, key: string) => (settings.setApiKey(key), settings.view()))
+  ipcMain.handle('settings:setApiKey', (_e, key: string) => (settings.setApiKey(key), void account.refresh(settings.getApiKey(), settings.get().apiBase), settings.view()))
   ipcMain.handle('settings:clearApiKey', () => (settings.clearApiKey(), settings.view()))
+  // Forgets the app's API key and the web login. Vibe's own stored sign-in (used by the `vibe` command) is left alone.
+  ipcMain.handle('settings:signOut', async () => (settings.clearApiKey(), await web.signOut(), account.clear(), settings.view()))
+  // One sign-in for everything: Vibe mints the API key via the console login, then, if the app has no chat.mistral.ai
+  // session yet (a separate login), the same kind of window continues there. Skipping or closing that part still
+  // leaves the key signed in; only the budget is missing.
+  ipcMain.handle('settings:signInWithBrowser', async () => {
+    const r = await code.signInWithBrowser(web)
+    if (!r.ok) return r
+    if (!(await web.signedIn())) await web.signInInWindow('https://chat.mistral.ai/code')
+    void account.refresh(settings.getApiKey(), settings.get().apiBase)
+    return { ok: true as const, web: await web.signedIn() }
+  })
+
+  // ---- account ----
+  ipcMain.handle('account:get', () => account.get(settings.getApiKey(), settings.get().apiBase))
+  // Opens the website's own sign-in in the app's window; resolves when the window is closed.
+  ipcMain.handle('account:webSignIn', async () => {
+    await web.signInInWindow('https://chat.mistral.ai/code')
+    return account.refresh(settings.getApiKey(), settings.get().apiBase)
+  })
+  ipcMain.handle('account:webSignOut', async () => (await web.signOut(), account.clear(), account.refresh(settings.getApiKey(), settings.get().apiBase)))
+  // Start loading right away so the name and plan are ready by the time the sidebar asks.
+  void account.refresh(settings.getApiKey(), settings.get().apiBase)
 
   // ---- chat ----
   const runs = new Map<string, AbortController>()
@@ -111,7 +139,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('chat:send', async (_e, req: { requestId: string; messages: WireMessage[]; model: string }) => {
     const emit = (e: ChatEvent): void => send('chat:event', req.requestId, e)
     const key = settings.getApiKey()
-    if (!key) return emit({ type: 'error', message: 'No API key set. Add your Mistral API key in Settings.' })
+    if (!key) return emit({ type: 'error', message: 'Not signed in. Sign in with Mistral or add an API key in Settings.' })
     const ac = new AbortController()
     runs.set(req.requestId, ac)
     try {
@@ -146,6 +174,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('conv:get', (_e, id: string) => convs.get(id))
   ipcMain.handle('conv:save', (_e, c: Conversation) => convs.save(c))
   ipcMain.handle('conv:remove', (_e, id: string) => convs.remove(id))
+  ipcMain.handle('conv:search', (_e, q: string) => convs.search(q))
 
   // ---- mcp ----
   ipcMain.handle('mcp:status', () => mcp.status())
@@ -195,6 +224,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:permission', (_e, id: string, r: string, o: string | null) => code.respondPermission(id, r, o))
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
   ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))
+  ipcMain.handle('code:workspaces', () => code.listWorkspaces())
   ipcMain.handle('code:resume', (_e, id: string, sid: string) => code.resume(id, sid))
 
   app.on('before-quit', () => {

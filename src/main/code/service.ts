@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import type { CodeEvent, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
+import { delimiter, join } from 'node:path'
+import type { BrowserSignInResult, CodeEvent, CodeWorkspace, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
 import type { SettingsStore } from '../settings'
+import { readVibeApiKey } from '../vibe-credentials'
 import { AcpClient, AcpError, type AcpAuthMethod } from './acp-client'
 
 interface Session {
@@ -23,10 +24,45 @@ interface Session {
 
 export const VIBE_INSTALL_HINT = 'Vibe is not installed. Install it with `uv tool install mistral-vibe` (or `pip install mistral-vibe`), or set its path in Settings.'
 
+/** Directories where Vibe usually ends up. GUI apps do not inherit the shell PATH, so Homebrew etc. are not on it. */
+export function vibeSearchDirs(): string[] {
+  if (process.platform === 'win32') return [join(homedir(), '.local', 'bin')]
+  return [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin']
+}
+
+/** PATH for spawned agents: the inherited one plus the usual tool directories. */
+export function augmentedPath(base: string | undefined = process.env.PATH): string {
+  const parts = (base ?? '').split(delimiter).filter(Boolean)
+  for (const d of [...vibeSearchDirs(), '/opt/homebrew/sbin', '/usr/local/sbin']) if (!parts.includes(d)) parts.push(d)
+  return parts.join(delimiter)
+}
+
 export function resolveVibeCommand(configured: string): string {
   if (configured.trim()) return configured.trim()
-  const local = join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'vibe-acp.exe' : 'vibe-acp')
-  return existsSync(local) ? local : 'vibe-acp'
+  const exe = process.platform === 'win32' ? 'vibe-acp.exe' : 'vibe-acp'
+  for (const dir of vibeSearchDirs()) {
+    const p = join(dir, exe)
+    if (existsSync(p)) return p
+  }
+  return 'vibe-acp'
+}
+
+/** All stored sessions Vibe has for a folder, newest first, optionally leaving one out. */
+async function collectSessions(client: AcpClient, cwd: string, exclude?: string): Promise<CodeSessionInfo[]> {
+  const out: CodeSessionInfo[] = []
+  let cursor: string | undefined
+  for (let page = 0; page < 5; page++) {
+    const r = await client.listSessions(cwd, cursor)
+    for (const s of r.sessions ?? []) if (s.sessionId !== exclude) out.push({ sessionId: s.sessionId, title: s.title?.trim() || 'Untitled session', updatedAt: s.updatedAt ?? null })
+    cursor = r.nextCursor ?? undefined
+    if (!cursor) break
+  }
+  return out.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+}
+
+/** The app's own sign-in window, so a login can leave a web session behind. */
+export interface WebAuthWindows {
+  open(url: string): { closed: Promise<void>; close(): void }
 }
 
 export class CodeService {
@@ -35,7 +71,9 @@ export class CodeService {
     private settings: SettingsStore,
     private emit: (id: string, e: CodeEvent) => void,
     /** MCP servers (in ACP shape) to give each session: manual, remote and extension servers. */
-    private getServers: () => Promise<unknown[]> = async () => []
+    private getServers: () => Promise<unknown[]> = async () => [],
+    /** Reads the key Vibe stored after sign-in. Replaceable so tests never touch the real keychain. */
+    private readKey: (vibeHome: string) => Promise<string | undefined> = readVibeApiKey
   ) {}
 
   async start(cwd: string): Promise<CodeStartResult> {
@@ -59,7 +97,7 @@ export class CodeService {
     client.on('stderr', (t: string) => (sess.stderrTail = (sess.stderrTail + t).slice(-2000)))
     client.on('exit', (code: number | null) => this.emit(id, { type: 'exit', code }))
 
-    const env: NodeJS.ProcessEnv = {}
+    const env: NodeJS.ProcessEnv = { PATH: augmentedPath() }
     const key = this.settings.getApiKey()
     if (key) env.MISTRAL_API_KEY = key
     if (s.vibeHome) env.VIBE_HOME = s.vibeHome
@@ -109,8 +147,61 @@ export class CodeService {
     return this.openSession(id, sess)
   }
 
+  /**
+   * "Sign in with Mistral" for the whole app. Vibe runs its browser sign-in in a throwaway agent process and
+   * mints an API key (keychain or ~/.vibe/.env), which is imported into this app's own key store so Chat and
+   * Code both use it.
+   *
+   * With `web`, the sign-in page is shown in the app's own window (Vibe's "delegated" mode), so the same login
+   * also leaves a chat.mistral.ai session in the app's web partition. Without it, or when Vibe does not offer the
+   * delegated mode, Vibe opens the system browser as before.
+   */
+  async signInWithBrowser(web?: WebAuthWindows): Promise<BrowserSignInResult> {
+    const s = this.settings.get()
+    const client = new AcpClient()
+    let stderr = ''
+    let win: { closed: Promise<void>; close(): void } | undefined
+    client.on('stderr', (t: string) => (stderr = (stderr + t).slice(-2000)))
+    // No MISTRAL_API_KEY here, otherwise Vibe sees a key already and offers no sign-in.
+    client.start(resolveVibeCommand(s.vibePath), [], { cwd: homedir(), env: { PATH: augmentedPath(), ...(s.vibeHome ? { VIBE_HOME: s.vibeHome } : {}), MISTRAL_API_KEY: '' } })
+    try {
+      const init = await client.initialize({ delegatedBrowserAuth: !!web })
+      const methods = init.authMethods ?? []
+      const delegated = web ? methods.find((m) => m.id === 'browser-auth-delegated') : undefined
+      if (web && delegated) {
+        const started = (await client.authenticate(delegated.id, { action: 'start' }))?._meta?.['browser-auth-delegated']
+        const url = started?.signInUrl
+        const attemptId = started?.attemptId
+        if (typeof url !== 'string' || typeof attemptId !== 'string') throw new Error('Vibe did not return a sign-in page')
+        win = web.open(url)
+        const done = client.authenticate(delegated.id, { action: 'complete', attemptId }).then(() => 'ok' as const)
+        done.catch(() => undefined)
+        let outcome = await Promise.race([done, win.closed.then(() => 'closed' as const)])
+        if (outcome === 'closed') {
+          // Closing the window right after finishing is fine: give the exchange a moment to land.
+          outcome = await Promise.race([done, new Promise<'closed'>((r) => setTimeout(() => r('closed'), 5000))]).catch(() => 'closed' as const)
+        }
+        if (outcome !== 'ok') return { ok: false, error: 'Sign-in was cancelled before it finished.' }
+      } else {
+        const method = methods.find((m) => m.id === 'browser-auth') ?? methods[0]
+        if (method) await client.authenticate(method.id)
+      }
+    } catch (e) {
+      const msg = (e as Error).message
+      return { ok: false, error: /ENOENT/.test(msg) ? VIBE_INSTALL_HINT : stderr && !msg ? stderr : msg }
+    } finally {
+      // Whatever happened, the sign-in window must not be left open.
+      win?.close()
+      client.kill()
+    }
+    const key = await this.readKey(s.vibeHome)
+    if (!key) return { ok: false, error: 'Signed in, but the key Vibe created could not be read from the keychain or ~/.vibe/.env. Paste an API key instead.' }
+    this.settings.setApiKey(key)
+    return { ok: true }
+  }
+
   private remember(cwd: string): void {
-    const recent = [cwd, ...this.settings.get().recentFolders.filter((f) => f !== cwd)].slice(0, 8)
+    const recent = [cwd, ...this.settings.get().recentFolders.filter((f) => f !== cwd)].slice(0, 20)
     this.settings.update({ recentFolders: recent })
   }
 
@@ -118,15 +209,39 @@ export class CodeService {
   async listSessions(id: string): Promise<CodeSessionInfo[]> {
     const sess = this.sessions.get(id)
     if (!sess?.canList) return []
-    const out: CodeSessionInfo[] = []
-    let cursor: string | undefined
-    for (let page = 0; page < 5; page++) {
-      const r = await sess.client.listSessions(sess.cwd, cursor)
-      for (const s of r.sessions ?? []) if (s.sessionId !== sess.acpSessionId) out.push({ sessionId: s.sessionId, title: s.title?.trim() || 'Untitled session', updatedAt: s.updatedAt ?? null })
-      cursor = r.nextCursor ?? undefined
-      if (!cursor) break
+    return collectSessions(sess.client, sess.cwd, sess.acpSessionId)
+  }
+
+  private workspacesInflight?: Promise<CodeWorkspace[]>
+
+  /**
+   * Recently opened folders with their stored sessions. Vibe only lists sessions through a running agent, so
+   * this starts one short-lived process (not tied to any folder), asks it per folder and stops it again.
+   */
+  listWorkspaces(): Promise<CodeWorkspace[]> {
+    this.workspacesInflight ??= this.readWorkspaces().finally(() => (this.workspacesInflight = undefined))
+    return this.workspacesInflight
+  }
+
+  private async readWorkspaces(): Promise<CodeWorkspace[]> {
+    const s = this.settings.get()
+    const folders = s.recentFolders.filter((f) => existsSync(f))
+    const bare = folders.map((path) => ({ path, sessions: [] as CodeSessionInfo[] }))
+    if (!folders.length) return bare
+    const client = new AcpClient()
+    client.on('stderr', () => undefined)
+    client.start(resolveVibeCommand(s.vibePath), [], { cwd: homedir(), env: { PATH: augmentedPath(), ...(s.vibeHome ? { VIBE_HOME: s.vibeHome } : {}) } })
+    try {
+      const init = await client.initialize()
+      if (!init.agentCapabilities?.sessionCapabilities?.list) return bare
+      const out: CodeWorkspace[] = []
+      for (const path of folders) out.push({ path, sessions: await collectSessions(client, path).catch(() => []) })
+      return out
+    } catch {
+      return bare
+    } finally {
+      client.kill()
     }
-    return out.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
   }
 
   /** Switch this connection to a stored session. The conversation is returned as the replayed update stream. */

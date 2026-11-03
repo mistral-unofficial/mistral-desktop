@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatEvent, Conversation, DisplayItem, McpServerStatus, SettingsView } from '@shared/types'
+import type { ChatEvent, Conversation, ConversationHit, DisplayItem, McpServerStatus, SettingsView } from '@shared/types'
 import { applyChatEvent, newConversation, settleInterrupted, titleFrom } from '../chatState'
 import { Collapsible, Markdown, PlainText } from '../components'
+import { SidebarPortal } from '../sidebar'
 
 type Summary = Pick<Conversation, 'id' | 'title' | 'updatedAt'>
 
@@ -14,11 +15,21 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
   const [requestId, setRequestId] = useState<string | null>(null)
   const [autoApprove, setAutoApprove] = useState(false)
   const [mcp, setMcp] = useState<McpServerStatus[]>([])
+  const [searching, setSearching] = useState(false)
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState<ConversationHit[]>([])
   const reqRef = useRef<string | null>(null)
   const autoRef = useRef(false)
   const bottom = useRef<HTMLDivElement>(null)
   autoRef.current = autoApprove
   const streaming = requestId !== null
+
+  useEffect(() => {
+    if (!searching) return
+    let stale = false
+    const t = setTimeout(() => void window.api.conversations.search(query).then((h) => !stale && setHits(h)), 120)
+    return () => { stale = true; clearTimeout(t) }
+  }, [searching, query])
 
   const refreshList = useCallback(() => void window.api.conversations.list().then(setList), [])
 
@@ -94,8 +105,13 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
 
   return (
     <div className="split">
-      <aside className="sidebar">
-        <button className="primary wide" disabled={streaming} onClick={() => setConv(newConversation(conv.model))}>＋ New chat</button>
+      <SidebarPortal tab="chat">
+        <div className="sidenav">
+          <button className="navbtn" disabled={streaming} onClick={() => setConv(newConversation(conv.model))}><span aria-hidden="true">＋</span> New</button>
+          <button className="navbtn" onClick={() => { setQuery(''); setSearching(true) }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg> Search
+          </button>
+        </div>
         <ul className="convlist">
           {list.map((c) => (
             <li key={c.id} className={c.id === conv.id ? 'active' : ''}>
@@ -104,7 +120,27 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
             </li>
           ))}
         </ul>
-      </aside>
+      </SidebarPortal>
+      {searching && (
+        <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearching(false) }}>
+          <div className="modal search" role="dialog" aria-modal="true" aria-label="Search chats">
+            <div className="searchhead">
+              <input autoFocus value={query} placeholder="Search chats…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setSearching(false) }} />
+              <button className="iconbtn" aria-label="Close search" title="Close (Esc)" onClick={() => setSearching(false)}>✕</button>
+            </div>
+            <div className="searchbody">
+              {!hits.length && <div className="muted">Nothing found.</div>}
+              {hits.map((h) => (
+                <button key={h.id} className="searchitem chat" disabled={streaming} onClick={() => { setSearching(false); void open(h.id) }}>
+                  <span className="historytitle">{h.title}</span>
+                  <span className="muted">{new Date(h.updatedAt).toLocaleDateString()}</span>
+                  {h.snippet && <span className="muted snippet">{h.snippet}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="content">
         <header className="bar">
           <label>Model{' '}

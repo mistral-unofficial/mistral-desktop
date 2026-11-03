@@ -1,14 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
-import type { CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, PermissionOption } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption } from '@shared/types'
 import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
 import { Collapsible, Diff, Markdown, PlainText } from '../components'
+import { SidebarPortal } from '../sidebar'
+import { WorkspaceList, folderName } from './WorkspaceList'
 
 type Status = 'idle' | 'starting' | 'ready' | 'needs-auth' | 'error' | 'exited'
 interface Perm { requestId: string; title: string; options: PermissionOption[] }
 
 export function CodeView({ goSettings, active }: { goSettings: () => void; active: boolean }) {
   const [folder, setFolder] = useState<string>()
-  const [recent, setRecent] = useState<string[]>([])
+  const [workspaces, setWorkspaces] = useState<CodeWorkspace[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>()
+  const [searching, setSearching] = useState(false)
+  const [query, setQuery] = useState('')
   const [status, setStatus] = useState<Status>('idle')
   const [message, setMessage] = useState('')
   const [auth, setAuth] = useState<{ id: string; methods: { id: string; name: string }[] }>()
@@ -35,6 +40,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
       case 'turn-end':
         setBusy(false)
         setPerms([])
+        void refreshWorkspaces() // the session now has a title
         if (e.stopReason !== 'end_turn') setState((s) => ({ ...s, items: [...s.items, { kind: 'info', text: `Turn ended: ${e.stopReason}` }] }))
         break
       case 'error': setBusy(false); setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: e.message }] })); break
@@ -42,9 +48,15 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     }
   }
 
+  // Show the known folders at once, then fill in their sessions once Vibe has answered.
+  const refreshWorkspaces = useCallback(async (): Promise<void> => {
+    const st = await window.api.settings.get()
+    setWorkspaces((prev) => st.recentFolders.map((path) => prev.find((w) => w.path === path) ?? { path, sessions: [] }))
+    setWorkspaces(await window.api.code.workspaces())
+  }, [])
   useEffect(() => {
-    if (active) void window.api.settings.get().then((s) => setRecent(s.recentFolders))
-  }, [active])
+    if (active) void refreshWorkspaces()
+  }, [active, refreshWorkspaces])
 
   useEffect(() => {
     return window.api.code.onEvent((id, e) => {
@@ -61,18 +73,21 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
       setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setCanResume(r.canResume); setShowHistory(false); setSessions(null)
       for (const e of buffered.current.get(r.id) ?? []) handle(e)
       buffered.current.delete(r.id)
-      void window.api.settings.get().then((s) => setRecent(s.recentFolders))
+      void refreshWorkspaces()
     } else if (r.status === 'needs-auth') {
       idRef.current = r.id
       setStatus('needs-auth'); setMessage(r.message); setAuth({ id: r.id, methods: r.authMethods })
     } else { setStatus('error'); setMessage(r.message) }
   }
 
-  const begin = async (dir: string): Promise<void> => {
+  /** Start Vibe in `dir`: a fresh session, or one of the folder's stored sessions when `sessionId` is given. */
+  const begin = async (dir: string, sessionId?: string): Promise<void> => {
     if (idRef.current) void window.api.code.stop(idRef.current)
     idRef.current = undefined
-    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setBusy(false); setMessage('')
-    adopt(await window.api.code.start(dir))
+    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setBusy(false); setMessage(''); setActiveSessionId(undefined); setSearching(false)
+    const r = await window.api.code.start(dir)
+    adopt(r)
+    if (r.status === 'ready' && sessionId) await load(r.id, sessionId)
   }
   const choose = async (): Promise<void> => {
     const dir = await window.api.code.pickFolder()
@@ -98,32 +113,81 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
       setSessions(await window.api.code.listSessions(idRef.current))
     }
   }
+  const load = async (id: string, sessionId: string): Promise<void> => {
+    const r = await window.api.code.resume(id, sessionId)
+    if (r.status === 'ready') {
+      setState({ ...replayHistory(r.history), mode: r.currentMode })
+      setModes(r.modes); setMode(r.currentMode); setPerms([]); setBusy(false); setActiveSessionId(sessionId)
+    } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
+  }
   const resume = async (sessionId: string): Promise<void> => {
     if (!idRef.current || busy) return
     setShowHistory(false)
-    const r = await window.api.code.resume(idRef.current, sessionId)
-    if (r.status === 'ready') {
-      setState({ ...replayHistory(r.history), mode: r.currentMode })
-      setModes(r.modes); setMode(r.currentMode); setPerms([]); setBusy(false)
-    } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
+    await load(idRef.current, sessionId)
   }
+  const matches = workspaces
+    .map((w) => ({ ...w, sessions: w.sessions.filter((x) => !query.trim() || (x.title + ' ' + w.path).toLowerCase().includes(query.trim().toLowerCase())) }))
+    .filter((w) => !query.trim() || w.sessions.length || w.path.toLowerCase().includes(query.trim().toLowerCase()))
   const answer = (p: Perm, optionId: string | null): void => {
     setPerms((ps) => ps.filter((x) => x.requestId !== p.requestId))
     void window.api.code.respondPermission(idRef.current!, p.requestId, optionId)
   }
 
+  const sidebar = (
+    <SidebarPortal tab="code">
+      <div className="sidenav">
+        <button className="navbtn" onClick={() => void choose()}><span aria-hidden="true">＋</span> New</button>
+        <button className="navbtn" onClick={() => { setQuery(''); setSearching(true) }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg> Search
+        </button>
+      </div>
+      <WorkspaceList workspaces={workspaces} variant="side" activeFolder={folder} activeSessionId={activeSessionId} onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} />
+    </SidebarPortal>
+  )
+  const searchDialog = searching && (
+    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearching(false) }}>
+      <div className="modal search" role="dialog" aria-modal="true" aria-label="Search workspaces and sessions">
+        <div className="searchhead">
+          <input autoFocus value={query} placeholder="Search workspaces and sessions…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setSearching(false) }} />
+          <button className="iconbtn" aria-label="Close search" title="Close (Esc)" onClick={() => setSearching(false)}>✕</button>
+        </div>
+        <div className="searchbody">
+          {!matches.length && <div className="muted">Nothing found.</div>}
+          {matches.map((w) => (
+            <div key={w.path} className="searchgroup">
+              <button className="searchws" title={w.path} onClick={() => void begin(w.path)}>📁 {folderName(w.path)} <span className="muted">New session</span></button>
+              {w.sessions.map((x) => (
+                <button key={x.sessionId} className="searchitem" onClick={() => void begin(w.path, x.sessionId)}>
+                  <span className="historytitle">{x.title}</span>
+                  <span className="muted">{x.updatedAt ? new Date(x.updatedAt).toLocaleDateString() : ''}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
   if (!folder || status === 'idle') {
     return (
-      <div className="center">
-        <h2>Code</h2>
-        <p className="muted">Pick a project folder. Mistral Vibe runs inside it and can read and edit files there.</p>
-        <button className="primary" onClick={() => void choose()}>Choose folder…</button>
-        {!!recent.length && (<><h3>Recent</h3><ul className="recent">{recent.map((r) => <li key={r}><button className="linklike" onClick={() => void begin(r)}>{r}</button></li>)}</ul></>)}
-      </div>
+      <>
+        {sidebar}
+        {searchDialog}
+        <div className="center dashboard">
+          <h2>Code</h2>
+          <p className="muted">Pick a project folder. Mistral Vibe runs inside it and can read and edit files there.</p>
+          <button className="primary" onClick={() => void choose()}>Choose folder…</button>
+          {!!workspaces.length && <WorkspaceList workspaces={workspaces} variant="cards" onNewSession={(p) => void begin(p)} onOpen={(p, sid) => void begin(p, sid)} />}
+        </div>
+      </>
     )
   }
 
   return (
+    <>
+    {sidebar}
+    {searchDialog}
     <div className="content">
       <header className="bar">
         <span className="folder" title={folder}>📁 {folder}</span>
@@ -190,6 +254,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
           : <button type="submit" className="primary" disabled={status !== 'ready' || !input.trim()}>Send</button>}
       </form>
     </div>
+    </>
   )
 }
 

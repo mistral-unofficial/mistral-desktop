@@ -1,4 +1,4 @@
-import type { ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, Conversation, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue } from './types'
+import type { AccountInfo, BrowserSignInResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue } from './types'
 
 /** The API exposed on `window.api` by the preload script. */
 export interface Api {
@@ -7,6 +7,19 @@ export interface Api {
     update(patch: Partial<Settings>): Promise<SettingsView>
     setApiKey(key: string): Promise<SettingsView>
     clearApiKey(): Promise<SettingsView>
+    /** Sign in through the browser (via Vibe) and store the resulting API key. Needs Vibe installed. */
+    signInWithBrowser(): Promise<BrowserSignInResult>
+    /** Removes the API key and the web login kept by this app. */
+    signOut(): Promise<SettingsView>
+  }
+  account: {
+    /** Plan (from Vibe's account lookup) and, with a web session, the budget. */
+    get(): Promise<AccountInfo>
+    /** Opens chat.mistral.ai in an app window for sign-in (budget); resolves when it is closed. */
+    webSignIn(): Promise<AccountInfo>
+    webSignOut(): Promise<AccountInfo>
+    /** Called with every fresh answer, e.g. the background refresh after the cached one was shown. */
+    onUpdate(cb: (info: AccountInfo) => void): () => void
   }
   chat: {
     models(): Promise<string[]>
@@ -20,6 +33,8 @@ export interface Api {
     get(id: string): Promise<Conversation | undefined>
     save(c: Conversation): Promise<void>
     remove(id: string): Promise<void>
+    /** Case-insensitive search over titles and message text, newest first. */
+    search(query: string): Promise<ConversationHit[]>
   }
   mcp: {
     status(): Promise<McpServerStatus[]>
@@ -54,6 +69,8 @@ export interface Api {
     respondPermission(id: string, requestId: string, optionId: string | null): Promise<void>
     stop(id: string): Promise<void>
     listSessions(id: string): Promise<CodeSessionInfo[]>
+    /** Recently opened folders with their stored sessions. Starts a short-lived Vibe process to read them. */
+    workspaces(): Promise<CodeWorkspace[]>
     resume(id: string, sessionId: string): Promise<CodeResumeResult>
     onEvent(cb: (id: string, e: CodeEvent) => void): () => void
   }
