@@ -88,8 +88,8 @@ export function App() {
         </aside>
         <SidebarSlots.Provider value={slots}>
           <main>
-            <section hidden={tab !== 'chat'} className="pane"><ChatView active={tab === 'chat'} goSettings={() => setShowSettings(true)} /></section>
-            <section hidden={tab !== 'code'} className="pane"><CodeView active={tab === 'code'} goSettings={() => setShowSettings(true)} /></section>
+            <section hidden={tab !== 'chat'} className="pane"><ChatView active={tab === 'chat' && !showSettings} goSettings={() => setShowSettings(true)} /></section>
+            <section hidden={tab !== 'code'} className="pane"><CodeView active={tab === 'code' && !showSettings} goSettings={() => setShowSettings(true)} /></section>
           </main>
         </SidebarSlots.Provider>
       </div>
