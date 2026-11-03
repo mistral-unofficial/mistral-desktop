@@ -1,11 +1,16 @@
 import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron'
-import { join } from 'node:path'
-import type { ChatEvent, Conversation, Settings, WireMessage } from '../shared/types'
+import { readFileSync, statSync } from 'node:fs'
+import { extname, join } from 'node:path'
+import type { ChatEvent, Conversation, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
 import { runChat } from './chat/run'
 import { listModels } from './chat/mistral'
 import { CodeService } from './code/service'
 import { ConversationStore } from './conversations'
-import { McpHost } from './mcp/host'
+import { McpHost, toAcpServers } from './mcp/host'
+import { OAuthStore } from './mcp/oauth'
+import { LIMITS } from './mcpb/bundle'
+import { ExtensionStore } from './mcpb/store'
+import { SecretVault } from './vault'
 import { SettingsStore } from './settings'
 
 const FALLBACK_MODELS = ['mistral-medium-latest', 'mistral-large-latest', 'mistral-small-latest', 'codestral-latest']
@@ -25,7 +30,7 @@ function createWindow(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) void shell.openExternal(url)
+    if (/^(https?:\/\/|mailto:)/i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e, url) => {
@@ -48,17 +53,43 @@ app.whenReady().then(async () => {
     encrypt: (s) => safeStorage.encryptString(s),
     decrypt: (b) => safeStorage.decryptString(b)
   })
+  const crypto = { available: strongEncryption, encrypt: (s: string) => safeStorage.encryptString(s), decrypt: (b: Buffer) => safeStorage.decryptString(b) }
   const convs = new ConversationStore(join(dir, 'conversations'))
-  const mcp = new McpHost()
+  const vault = new SecretVault(dir, crypto)
+  const extensions = new ExtensionStore(join(dir, 'extensions'), vault, {
+    systemDirs: () => ({ HOME: app.getPath('home'), DESKTOP: app.getPath('desktop'), DOCUMENTS: app.getPath('documents'), DOWNLOADS: app.getPath('downloads') }),
+    execPath: process.execPath
+  })
+  // Opens the user's browser for OAuth sign-in. The test hook lets e2e runs play the browser's part.
+  const openExternal = async (url: string): Promise<void> => {
+    if (process.env.MISTRAL_DESKTOP_TEST_BROWSER === 'fetch') return void (await fetch(url, { redirect: 'follow' }))
+    if (!/^https?:\/\//.test(url)) throw new Error('Refusing to open a non-http URL')
+    await shell.openExternal(url)
+  }
+  const oauth = new OAuthStore(vault)
+  const mcp = new McpHost({ oauth, openExternal })
   mcp.onChange = () => send('mcp:changed', mcp.status())
-  const code = new CodeService(settings, (id, e) => send('code:event', id, e))
-  void mcp.sync(settings.get().mcpServers)
+  /** Manually configured servers plus those provided by installed extensions. */
+  const allServers = async (): Promise<McpServerConfig[]> => [...settings.get().mcpServers, ...(await extensions.servers())]
+  const resync = (): void => void allServers().then((s) => mcp.sync(s))
+  // Settings edits arrive per keystroke; wait for a pause so half-typed URLs/commands are never connected to.
+  let resyncTimer: NodeJS.Timeout | undefined
+  const resyncSoon = (): void => {
+    clearTimeout(resyncTimer)
+    resyncTimer = setTimeout(resync, 600)
+  }
+  extensions.onChange = () => {
+    send('ext:changed', extensions.list())
+    resync()
+  }
+  const code = new CodeService(settings, (id, e) => send('code:event', id, e), async () => toAcpServers(await allServers(), (id) => mcp.accessToken(id)))
+  resync()
 
   // ---- settings ----
   ipcMain.handle('settings:get', () => settings.view())
   ipcMain.handle('settings:update', async (_e, patch: Partial<Settings>) => {
     settings.update(patch)
-    if (patch.mcpServers) void mcp.sync(settings.get().mcpServers)
+    if (patch.mcpServers) resyncSoon()
     return settings.view()
   })
   ipcMain.handle('settings:setApiKey', (_e, key: string) => (settings.setApiKey(key), settings.view()))
@@ -118,6 +149,37 @@ app.whenReady().then(async () => {
 
   // ---- mcp ----
   ipcMain.handle('mcp:status', () => mcp.status())
+  ipcMain.handle('mcp:authorize', (_e, id: string) => mcp.authorize(id))
+  ipcMain.handle('mcp:signOut', (_e, id: string) => mcp.signOut(id))
+
+  // ---- extensions (.mcpb) ----
+  const previewPath = (path: string): ExtensionPreview | { error: string } => {
+    try {
+      if (!['.mcpb', '.dxt'].includes(extname(path).toLowerCase())) return { error: 'Please choose a .mcpb file' }
+      if (statSync(path).size > LIMITS.archiveBytes) return { error: 'Bundle is larger than 150 MB' }
+      return extensions.preview(readFileSync(path))
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
+  }
+  ipcMain.handle('ext:pick', async () => {
+    const test = process.env.MISTRAL_DESKTOP_TEST_MCPB // e2e hook: native dialogs cannot be automated
+    if (test) return previewPath(test)
+    const r = await dialog.showOpenDialog(win!, { title: 'Install extension', properties: ['openFile'], filters: [{ name: 'MCP bundle', extensions: ['mcpb', 'dxt'] }] })
+    return r.canceled || !r.filePaths[0] ? undefined : previewPath(r.filePaths[0])
+  })
+  ipcMain.handle('ext:previewPath', (_e, path: string) => previewPath(path))
+  ipcMain.handle('ext:install', (_e, sid: string, values: Record<string, UserConfigValue | string>) => extensions.install(sid, values))
+  ipcMain.handle('ext:discard', (_e, sid: string) => extensions.discard(sid))
+  ipcMain.handle('ext:list', () => extensions.list())
+  ipcMain.handle('ext:setEnabled', (_e, id: string, enabled: boolean) => extensions.setEnabled(id, enabled))
+  ipcMain.handle('ext:configure', (_e, id: string, values: Record<string, UserConfigValue | string>) => extensions.configure(id, values))
+  ipcMain.handle('ext:uninstall', (_e, id: string) => extensions.uninstall(id))
+  ipcMain.handle('dialog:pickPath', async (_e, kind: 'file' | 'directory') => {
+    if (process.env.MISTRAL_DESKTOP_TEST_FOLDER && kind === 'directory') return process.env.MISTRAL_DESKTOP_TEST_FOLDER
+    const r = await dialog.showOpenDialog(win!, { properties: [kind === 'directory' ? 'openDirectory' : 'openFile'] })
+    return r.canceled ? undefined : r.filePaths[0]
+  })
 
   // ---- code ----
   ipcMain.handle('code:pickFolder', async () => {
@@ -132,6 +194,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:setMode', (_e, id: string, m: string) => code.setMode(id, m))
   ipcMain.handle('code:permission', (_e, id: string, r: string, o: string | null) => code.respondPermission(id, r, o))
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
+  ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))
+  ipcMain.handle('code:resume', (_e, id: string, sid: string) => code.resume(id, sid))
 
   app.on('before-quit', () => {
     code.stopAll()

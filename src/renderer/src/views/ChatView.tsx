@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatEvent, Conversation, DisplayItem, McpServerStatus, SettingsView } from '@shared/types'
 import { applyChatEvent, newConversation, settleInterrupted, titleFrom } from '../chatState'
-import { Collapsible, RichText } from '../components'
+import { Collapsible, Markdown, PlainText } from '../components'
 
 type Summary = Pick<Conversation, 'id' | 'title' | 'updatedAt'>
 
@@ -88,6 +88,7 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
     refreshList()
   }
 
+  const needAuth = mcp.filter((m) => m.state === 'needs-auth')
   const connected = mcp.filter((m) => m.state === 'connected')
   const toolCount = connected.reduce((n, m) => n + m.tools.length, 0)
 
@@ -116,6 +117,9 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
             <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} /> Auto-approve tools
           </label>
         </header>
+        {needAuth.length > 0 && (
+          <div className="banner">{needAuth.map((m) => m.name).join(', ')} {needAuth.length === 1 ? 'needs' : 'need'} you to sign in. <button className="linklike" onClick={goSettings}>Open Settings</button></div>
+        )}
         {settings && !settings.hasApiKey && (
           <div className="banner">No Mistral API key yet. <button className="linklike" onClick={goSettings}>Add one in Settings</button> to start chatting.</div>
         )}
@@ -144,8 +148,8 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
 
 function ChatItem({ item }: { item: DisplayItem }) {
   switch (item.kind) {
-    case 'user': return <div className="msg user"><RichText text={item.text} /></div>
-    case 'assistant': return <div className="msg assistant"><RichText text={item.text} /></div>
+    case 'user': return <div className="msg user"><PlainText text={item.text} /></div>
+    case 'assistant': return <div className="msg assistant"><Markdown text={item.text} /></div>
     case 'error': return <div className="msg error" role="alert">{item.text}</div>
     case 'tool': return <ToolCard item={item} />
   }

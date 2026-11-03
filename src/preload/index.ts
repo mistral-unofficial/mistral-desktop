@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Api } from '../shared/api'
-import type { ChatEvent, CodeEvent, McpServerStatus } from '../shared/types'
+import type { ChatEvent, CodeEvent, InstalledExtension, McpServerStatus } from '../shared/types'
 
 const inv = <T>(ch: string, ...a: unknown[]): Promise<T> => ipcRenderer.invoke(ch, ...a) as Promise<T>
 const sub = <A extends unknown[]>(ch: string, cb: (...a: A) => void): (() => void) => {
@@ -31,7 +31,23 @@ const api: Api = {
   },
   mcp: {
     status: () => inv('mcp:status'),
+    authorize: (id) => inv('mcp:authorize', id),
+    signOut: (id) => inv('mcp:signOut', id),
     onChange: (cb) => sub<[McpServerStatus[]]>('mcp:changed', cb)
+  },
+  extensions: {
+    pick: () => inv('ext:pick'),
+    previewFile: (file) => inv('ext:previewPath', webUtils.getPathForFile(file)),
+    install: (sid, v) => inv('ext:install', sid, v),
+    discard: (sid) => inv('ext:discard', sid),
+    list: () => inv('ext:list'),
+    setEnabled: (id, e) => inv('ext:setEnabled', id, e),
+    configure: (id, v) => inv('ext:configure', id, v),
+    uninstall: (id) => inv('ext:uninstall', id),
+    onChange: (cb) => sub<[InstalledExtension[]]>('ext:changed', cb)
+  },
+  dialog: {
+    pickPath: (kind) => inv('dialog:pickPath', kind)
   },
   code: {
     pickFolder: () => inv('code:pickFolder'),
@@ -42,6 +58,8 @@ const api: Api = {
     setMode: (id, m) => inv('code:setMode', id, m),
     respondPermission: (id, r, o) => inv('code:permission', id, r, o),
     stop: (id) => inv('code:stop', id),
+    listSessions: (id) => inv('code:listSessions', id),
+    resume: (id, sid) => inv('code:resume', id, sid),
     onEvent: (cb) => sub<[string, CodeEvent]>('code:event', cb)
   }
 }

@@ -14,7 +14,12 @@ npm run build && npm start
 
 - **Chat** needs a Mistral API key (Settings → Mistral API key, or `MISTRAL_API_KEY` in the environment).
 - **Code** needs Vibe: `uv tool install mistral-vibe`. The app looks for `vibe-acp` on `PATH` and in `~/.local/bin`, or use the path in Settings. The key from Settings is passed to Vibe; if Vibe offers browser sign-in the Code tab shows a button for it.
-- **MCP servers** (Settings): add local stdio servers by hand or paste a `{ "mcpServers": … }` block (e.g. from `claude_desktop_config.json`). They are available to Chat as tools (each call needs your approval unless you tick "Auto-approve tools") and are passed to Vibe in the Code tab.
+- **MCP servers** (Settings) come in three kinds. All are available to Chat as tools (each call needs your approval unless you tick "Auto-approve tools") and are handed to Vibe in the Code tab.
+  - **Extensions (`.mcpb`)**: click *Install extension…* (or drop a file). You see what it will run, fill in its settings (secrets go to the OS keychain), and it starts automatically. Settings can be changed later, extensions can be disabled or uninstalled. Updating a bundle keeps your settings.
+  - **Local servers**: any stdio command, added by hand or by pasting a `{ "mcpServers": … }` block (e.g. from `claude_desktop_config.json`; entries with a `url` become remote servers).
+  - **Remote servers**: a URL (streamable HTTP, with automatic fallback to legacy SSE), optional headers, and OAuth sign-in (*Sign in* opens your browser; tokens are kept in the keychain).
+- **Chat** renders Markdown (tables, lists, code blocks with a copy button). Raw HTML is shown as text, links open in your browser, images are not loaded.
+- **Code → History** lists earlier Vibe sessions for the current folder; pick one to continue it where you left off.
 
 ## How it fits together
 
@@ -23,7 +28,9 @@ renderer (React)  ──IPC (contextIsolation, typed in src/shared/api.ts)──
  Chat / Code / Settings                                                     settings.ts      API key via OS keychain (safeStorage)
                                                                             chat/mistral.ts  streaming chat completions (SSE)
                                                                             chat/run.ts      tool loop with per-call approval
-                                                                            mcp/host.ts      MCP client for stdio servers
+                                                                            mcp/host.ts      MCP client: stdio, streamable HTTP, SSE; OAuth via mcp/oauth.ts
+                                                                            mcpb/            .mcpb parsing/validation (bundle.ts), install + settings (store.ts)
+                                                                            vault.ts         encrypted store for extension secrets and OAuth tokens
                                                                             code/acp-client  Agent Client Protocol over `vibe-acp`
                                                                             code/service.ts  sessions, permissions, auth, recent folders
 ```
@@ -39,11 +46,12 @@ The e2e test uses local mock servers instead of Mistral (`e2e/mock-mistral.mjs` 
 
 ## Known gaps
 
-- **Never run against the real Mistral API or a real Le Chat/Mistral account**: everything is verified against mocks, plus the real `vibe-acp` binary talking to a mock model. Real-model behaviour, the browser sign-in flow, and model-list filtering are untested.
-- **MCPB (`.mcpb`) install is not implemented yet.** Servers are configured manually or via JSON import.
-- Only local **stdio** MCP servers; no remote HTTP/OAuth servers.
+- **Never run against the real Mistral API or a real Mistral account**: everything is verified against mocks, plus the real `vibe-acp` binary talking to a mock model. Real-model behaviour, the Vibe browser sign-in flow, and model-list filtering are untested.
+- **MCPB**: bundle signatures are detected but **not verified** (the install dialog says so). Python and `uv` bundles need Python/uv on the machine; Node bundles use your `node`, or this app's built-in Node if you have none. Not supported: bundle localization, `prompts`, auto-update, installing by double-clicking a file. Tested with synthetic bundles, not a library of real third-party ones.
+- **Remote MCP**: custom header values (e.g. a static `Authorization` token) are stored **unencrypted** in `settings.json`; prefer OAuth. OAuth is tested against a mock server (discovery, dynamic registration, PKCE, refresh), not a real provider. In the Code tab, OAuth servers are passed to Vibe with the *current* access token, so they stop working when it expires until the app refreshes it (restart the session).
 - In Vibe, MCP tools reach the model through its code-mode (`search_tool_functions` + `run_typescript`), not as direct tools. How well that works with Mistral models is untested.
-- Code tab: no session resume/history, no terminal pane. The permission prompt UI is covered by unit tests, not by the e2e run.
-- Chat renders plain text and fenced code blocks only (no Markdown).
-- No packaging/auto-update/code signing yet. The `Code` agent's cwd is not a sandbox; use Vibe's `ask` mode to review actions.
+- **Session resume** replays the stored conversation but shows it as a flat history (no scroll-to-position); sessions are listed per folder and per Vibe home. Vibe must support `session/list` and `session/load` (3.0.4 does); otherwise the History button is hidden.
+- Code tab: no terminal pane. The permission prompt UI is covered by unit tests, not by the e2e run.
+- Markdown has no syntax highlighting.
+- No packaging/auto-update/code signing yet. The Code agent's cwd is not a sandbox; use Vibe's `ask` mode to review actions.
 - Electron's `safeStorage` on Linux without a keyring is detected and the app falls back to a 0600 file, saying so in Settings.

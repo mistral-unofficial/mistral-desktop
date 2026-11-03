@@ -5,7 +5,7 @@ export interface DiffContent {
 }
 
 export type CodeItem =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; messageId?: string }
   | { kind: 'agent'; text: string; messageId?: string }
   | { kind: 'thought'; text: string; messageId?: string }
   | { kind: 'tool'; id: string; title: string; toolKind: string; status: string; diffs: DiffContent[]; text: string }
@@ -43,10 +43,23 @@ const chunkText = (u: Update): string => {
   return c?.type === 'text' && typeof c.text === 'string' ? c.text : ''
 }
 
-/** Fold an ACP `session/update` payload into UI state. Unknown update kinds are ignored. */
-export function applyCodeUpdate(state: CodeState, u: Update): CodeState {
+/**
+ * Fold an ACP `session/update` payload into UI state. Unknown update kinds are ignored.
+ * With `replay` (a stored session being loaded) the user's own messages are included; live, the UI adds
+ * those itself when sending, so the agent's echo of them is ignored.
+ */
+export function applyCodeUpdate(state: CodeState, u: Update, opts: { replay?: boolean } = {}): CodeState {
   const items = state.items
   switch (u.sessionUpdate) {
+    case 'user_message_chunk': {
+      if (!opts.replay) return state
+      const text = chunkText(u)
+      if (!text) return state
+      const messageId = typeof u.messageId === 'string' ? u.messageId : undefined
+      const last = items[items.length - 1]
+      if (last && last.kind === 'user' && last.messageId === messageId) return { ...state, items: [...items.slice(0, -1), { ...last, text: last.text + text }] }
+      return { ...state, items: [...items, { kind: 'user', text, messageId }] }
+    }
     case 'agent_message_chunk':
     case 'agent_thought_chunk': {
       const kind = u.sessionUpdate === 'agent_message_chunk' ? 'agent' : 'thought'
@@ -113,4 +126,9 @@ export function lineDiff(oldText: string | null | undefined, newText: string): D
   while (i < a.length) out.push({ type: 'del', text: a[i++]! })
   while (j < b.length) out.push({ type: 'add', text: b[j++]! })
   return out
+}
+
+/** Rebuild UI state from the update stream returned when resuming a stored session. */
+export function replayHistory(history: Update[]): CodeState {
+  return history.reduce<CodeState>((st, u) => applyCodeUpdate(st, u, { replay: true }), { items: [] })
 }

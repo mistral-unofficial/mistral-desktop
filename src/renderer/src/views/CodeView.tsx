@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CodeEvent, CodeMode, CodeStartResult, PermissionOption } from '@shared/types'
-import { applyCodeUpdate, type CodeItem, type CodeState } from '../codeState'
-import { Collapsible, Diff, RichText } from '../components'
+import type { CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, PermissionOption } from '@shared/types'
+import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
+import { Collapsible, Diff, Markdown, PlainText } from '../components'
 
 type Status = 'idle' | 'starting' | 'ready' | 'needs-auth' | 'error' | 'exited'
 interface Perm { requestId: string; title: string; options: PermissionOption[] }
@@ -18,6 +18,9 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const [busy, setBusy] = useState(false)
   const [perms, setPerms] = useState<Perm[]>([])
   const [input, setInput] = useState('')
+  const [canResume, setCanResume] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [sessions, setSessions] = useState<CodeSessionInfo[] | null>(null)
   const idRef = useRef<string | undefined>(undefined)
   const buffered = useRef(new Map<string, CodeEvent[]>())
   const bottom = useRef<HTMLDivElement>(null)
@@ -55,7 +58,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
   const adopt = (r: CodeStartResult): void => {
     if (r.status === 'ready') {
       idRef.current = r.id
-      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage('')
+      setStatus('ready'); setModes(r.modes); setMode(r.currentMode); setAuth(undefined); setMessage(''); setCanResume(r.canResume); setShowHistory(false); setSessions(null)
       for (const e of buffered.current.get(r.id) ?? []) handle(e)
       buffered.current.delete(r.id)
       void window.api.settings.get().then((s) => setRecent(s.recentFolders))
@@ -87,6 +90,23 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
     setInput(''); setBusy(true)
     void window.api.code.prompt(idRef.current, text)
   }
+  const toggleHistory = async (): Promise<void> => {
+    const open = !showHistory
+    setShowHistory(open)
+    if (open && idRef.current) {
+      setSessions(null)
+      setSessions(await window.api.code.listSessions(idRef.current))
+    }
+  }
+  const resume = async (sessionId: string): Promise<void> => {
+    if (!idRef.current || busy) return
+    setShowHistory(false)
+    const r = await window.api.code.resume(idRef.current, sessionId)
+    if (r.status === 'ready') {
+      setState({ ...replayHistory(r.history), mode: r.currentMode })
+      setModes(r.modes); setMode(r.currentMode); setPerms([]); setBusy(false)
+    } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
+  }
   const answer = (p: Perm, optionId: string | null): void => {
     setPerms((ps) => ps.filter((x) => x.requestId !== p.requestId))
     void window.api.code.respondPermission(idRef.current!, p.requestId, optionId)
@@ -108,6 +128,7 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
       <header className="bar">
         <span className="folder" title={folder}>📁 {folder}</span>
         <button onClick={() => void choose()}>Change…</button>
+        {status === 'ready' && canResume && <button onClick={() => void toggleHistory()} disabled={busy} aria-expanded={showHistory}>History</button>}
         {status === 'ready' && modes.length > 0 && (
           <label>Mode{' '}
             <select value={mode} className={mode === 'auto-approve' ? 'warn' : ''} onChange={(e) => { setMode(e.target.value); void window.api.code.setMode(idRef.current!, e.target.value) }}>
@@ -118,6 +139,18 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
         {state.usage && <span className="muted" title="Context used">{Math.round((100 * state.usage.used) / state.usage.size)}% context</span>}
       </header>
       {state.title && <div className="muted subtitle">{state.title}</div>}
+      {showHistory && (
+        <div className="history" role="region" aria-label="Previous sessions">
+          {sessions === null && <div className="muted">Loading…</div>}
+          {sessions?.length === 0 && <div className="muted">No earlier sessions in this folder.</div>}
+          {sessions?.map((s) => (
+            <button key={s.sessionId} className="historyitem" onClick={() => void resume(s.sessionId)}>
+              <span className="historytitle">{s.title}</span>
+              <span className="muted">{s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {status === 'starting' && <div className="banner">{message || 'Starting Vibe…'}</div>}
       {status === 'needs-auth' && (
         <div className="banner">
@@ -162,9 +195,9 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
 
 function CodeRow({ item }: { item: CodeItem }) {
   switch (item.kind) {
-    case 'user': return <div className="msg user"><RichText text={item.text} /></div>
-    case 'agent': return <div className="msg assistant"><RichText text={item.text} /></div>
-    case 'thought': return <Collapsible summary="Thinking"><div className="muted"><RichText text={item.text} /></div></Collapsible>
+    case 'user': return <div className="msg user"><PlainText text={item.text} /></div>
+    case 'agent': return <div className="msg assistant"><Markdown text={item.text} /></div>
+    case 'thought': return <Collapsible summary="Thinking"><div className="muted"><Markdown text={item.text} /></div></Collapsible>
     case 'error': return <div className="msg error" role="alert">{item.text}</div>
     case 'info': return <div className="muted center-text">{item.text}</div>
     case 'tool':

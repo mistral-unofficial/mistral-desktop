@@ -2,8 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { CodeEvent } from '../src/shared/types'
-import { AcpClient } from '../src/main/code/acp-client'
+import type { CodeEvent, McpServerConfig } from '../src/shared/types'
 import { CodeService } from '../src/main/code/service'
 import { SettingsStore } from '../src/main/settings'
 
@@ -11,12 +10,12 @@ const AGENT = resolve('tests/fixtures/fake-agent.mjs')
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'md-code-'))
 const noCrypto = { available: () => false, encrypt: (s: string) => Buffer.from(s), decrypt: (b: Buffer) => b.toString() }
 
-function service(mode: string, extra: Record<string, unknown> = {}) {
+function service(mode: string, extra: Record<string, unknown> = {}, servers: unknown[] = []) {
   process.env.FAKE_MODE = mode
   const settings = new SettingsStore(tmp(), noCrypto, {})
   settings.update({ vibePath: AGENT, ...extra })
   const events: CodeEvent[] = []
-  const svc = new CodeService(settings, (_id, e) => events.push(e))
+  const svc = new CodeService(settings, (_id, e) => events.push(e), async () => servers)
   const waitFor = async (pred: (e: CodeEvent) => boolean, ms = 4000): Promise<CodeEvent> => {
     const t0 = Date.now()
     while (Date.now() - t0 < ms) {
@@ -47,22 +46,22 @@ describe('CodeService with a fake ACP agent', () => {
   })
 
   it('passes enabled MCP servers to session/new', async () => {
-    const mcp = [
-      { id: '1', name: 'on', command: 'node', args: ['a.js'], env: { K: 'v' }, enabled: true },
-      { id: '2', name: 'off', command: 'node', args: [], env: {}, enabled: false }
-    ]
-    const { svc, settings } = service('normal', { mcpServers: mcp })
-    // capture the agent's stderr line through the client directly
-    const c = new AcpClient()
-    let err = ''
-    c.on('stderr', (t: string) => (err += t))
-    c.start(AGENT, [], { cwd: tmp() })
-    await c.initialize()
     const { toAcpServers } = await import('../src/main/mcp/host')
-    await c.newSession(tmp(), toAcpServers(settings.get().mcpServers))
-    await new Promise((r) => setTimeout(r, 100))
-    expect(JSON.parse(err.trim().replace(/^mcp:/, ''))).toEqual([{ name: 'on', command: 'node', args: ['a.js'], env: [{ name: 'K', value: 'v' }] }])
-    c.kill()
+    const configs: McpServerConfig[] = [
+      { id: '1', name: 'on', command: 'node', args: ['a.js'], env: { K: 'v' }, enabled: true },
+      { id: '2', name: 'off', command: 'node', args: [], env: {}, enabled: false },
+      { id: '3', name: 'web', transport: 'http', url: 'https://x.example/mcp', headers: { A: 'b' }, command: '', args: [], env: {}, enabled: true }
+    ]
+    const { svc, events, waitFor } = service('normal', {}, toAcpServers(configs))
+    const r = await svc.start(tmp())
+    expect(r.status).toBe('ready')
+    const e = await waitFor((x) => /new-servers=/.test(JSON.stringify(x)))
+    const sent = JSON.parse(JSON.stringify(e).match(/new-servers=(\[.*\])/)![1]!.replace(/\\"/g, '"'))
+    expect(sent).toEqual([
+      { name: 'on', command: 'node', args: ['a.js'], env: [{ name: 'K', value: 'v' }] },
+      { type: 'http', name: 'web', url: 'https://x.example/mcp', headers: [{ name: 'A', value: 'b' }] }
+    ])
+    void events
     svc.stopAll()
   })
 
@@ -114,6 +113,51 @@ describe('CodeService with a fake ACP agent', () => {
     const { svc } = service('normal', { vibePath: '/nonexistent/vibe-acp' })
     const r = await svc.start(tmp())
     expect(r).toMatchObject({ status: 'error', message: expect.stringContaining('uv tool install mistral-vibe') })
+  })
+
+  it('lists stored sessions for the folder (newest first, current one excluded) and resumes one', async () => {
+    const { svc, events, waitFor } = service('normal', {}, [{ name: 'srv', command: 'x', args: [], env: [] }])
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    expect(r.canResume).toBe(true)
+    const list = await svc.listSessions(r.id)
+    expect(list.map((s) => s.sessionId)).toEqual(['old-2', 'old-1']) // 's1' is the open session
+    expect(list[0]).toMatchObject({ title: 'Untitled session' })
+
+    events.length = 0
+    const res = await svc.resume(r.id, 'old-1')
+    if (res.status !== 'ready') throw new Error(res.status === 'error' ? res.message : '')
+    expect(res.currentMode).toBe('ask')
+    expect(res.history.map((u) => u.sessionUpdate)).toEqual(['user_message_chunk', 'agent_message_chunk', 'agent_message_chunk'])
+    expect(JSON.stringify(res.history)).toContain('load-servers=')
+    expect(events).toEqual([]) // replayed history is returned, not streamed as live events
+
+    svc.prompt(r.id, 'continue')
+    await waitFor((e) => e.type === 'turn-end')
+    expect(events.some((e) => text(e).includes('session=old-1'))).toBe(true)
+    svc.stopAll()
+  })
+
+  it('reports a failed resume and refuses while a turn is running', async () => {
+    const { svc, waitFor } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    expect(await svc.resume(r.id, 'missing')).toEqual({ status: 'error', message: 'Session not found' })
+    svc.prompt(r.id, 'ask')
+    await waitFor((e) => e.type === 'permission')
+    expect(await svc.resume(r.id, 'old-1')).toMatchObject({ status: 'error', message: expect.stringContaining('current turn') })
+    svc.cancel(r.id)
+    svc.stopAll()
+  })
+
+  it('agents without session support: canResume is false, list is empty, resume errors', async () => {
+    const { svc } = service('noresume')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    expect(r.canResume).toBe(false)
+    expect(await svc.listSessions(r.id)).toEqual([])
+    expect(await svc.resume(r.id, 'old-1')).toMatchObject({ status: 'error' })
+    svc.stopAll()
   })
 
   it('rejects a path that is not a folder', async () => {

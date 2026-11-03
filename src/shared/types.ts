@@ -3,10 +3,21 @@
 export interface McpServerConfig {
   id: string
   name: string
+  enabled: boolean
+  /** Default is stdio. */
+  transport?: 'stdio' | 'http'
+  // stdio
   command: string
   args: string[]
   env: Record<string, string>
-  enabled: boolean
+  cwd?: string
+  // http (streamable HTTP, falling back to legacy SSE)
+  url?: string
+  headers?: Record<string, string>
+  /** Use OAuth sign-in (discovered from the server) for this remote server. */
+  oauth?: boolean
+  /** Set on servers that come from an installed .mcpb extension; those are not stored in settings. */
+  extensionId?: string
 }
 
 export interface Settings {
@@ -69,10 +80,73 @@ export type ChatEvent =
 export interface McpServerStatus {
   id: string
   name: string
-  state: 'connecting' | 'connected' | 'error' | 'disabled'
+  kind: 'stdio' | 'http'
+  state: 'connecting' | 'connected' | 'error' | 'disabled' | 'needs-auth'
   error?: string
   tools: string[]
+  extensionId?: string
 }
+
+// ---- MCPB extensions ----
+
+export type UserConfigValue = string | number | boolean | string[]
+
+export interface UserConfigField {
+  type: 'string' | 'number' | 'boolean' | 'directory' | 'file'
+  title: string
+  description: string
+  required?: boolean
+  default?: UserConfigValue
+  multiple?: boolean
+  sensitive?: boolean
+  min?: number
+  max?: number
+}
+
+export interface ExtensionPreview {
+  stagingId: string
+  id: string
+  name: string
+  displayName: string
+  version: string
+  description: string
+  author: string
+  serverType: string
+  command: string
+  args: string[]
+  tools: { name: string; description?: string }[]
+  userConfig: Record<string, UserConfigField>
+  /** Defaults, with ${HOME}-style variables already resolved. */
+  defaults: Record<string, UserConfigValue>
+  /** The bundle carries a signature block. The signature is NOT verified. */
+  signed: boolean
+  warnings: string[]
+  fileCount: number
+  sizeBytes: number
+  icon?: string
+  previous?: { version: string; values: Record<string, UserConfigValue>; secretKeys: string[] }
+}
+
+export interface InstalledExtension {
+  id: string
+  name: string
+  displayName: string
+  version: string
+  description: string
+  author: string
+  serverType: string
+  enabled: boolean
+  userConfig: Record<string, UserConfigField>
+  /** Current values; sensitive ones are never sent to the UI (see secretKeys). */
+  values: Record<string, UserConfigValue>
+  secretKeys: string[]
+  missingRequired: string[]
+  signed: boolean
+  installedAt: number
+  icon?: string
+}
+
+export type ExtensionResult<T = InstalledExtension> = { ok: true; extension: T } | { ok: false; error: string; fieldErrors?: Record<string, string> }
 
 // ---- Code tab ----
 
@@ -83,7 +157,7 @@ export interface CodeMode {
 }
 
 export type CodeStartResult =
-  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string }
+  | { status: 'ready'; id: string; modes: CodeMode[]; currentMode: string; canResume: boolean }
   | { status: 'needs-auth'; id: string; authMethods: { id: string; name: string; description?: string }[]; message: string }
   | { status: 'error'; message: string }
 
@@ -100,3 +174,14 @@ export type CodeEvent =
   | { type: 'turn-end'; stopReason: string }
   | { type: 'error'; message: string }
   | { type: 'exit'; code: number | null }
+
+export interface CodeSessionInfo {
+  sessionId: string
+  title: string
+  updatedAt: string | null
+}
+
+/** Result of resuming a stored session; `history` is the replayed `session/update` stream. */
+export type CodeResumeResult =
+  | { status: 'ready'; modes: CodeMode[]; currentMode: string; history: (Record<string, unknown> & { sessionUpdate: string })[] }
+  | { status: 'error'; message: string }

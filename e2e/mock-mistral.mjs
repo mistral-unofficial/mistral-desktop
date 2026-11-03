@@ -13,7 +13,8 @@ http.createServer((req, res) => {
     if (req.headers.authorization !== 'Bearer test-key') { res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"message":"Unauthorized"}') }
     const j = JSON.parse(body)
     const last = j.messages.at(-1)
-    const tool = (j.tools || []).find((t) => /echo/.test(t.function.name))
+    const want = /remote/.test(last.content || '') ? 'remote' : 'demo'
+    const tool = (j.tools || []).find((t) => t.function.name.startsWith(want + '__') && /echo/.test(t.function.name))
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     const base = { id: 'c', object: 'chat.completion.chunk', created: 1, model: j.model }
     if (last.role === 'user' && /echo/.test(last.content) && tool) {
@@ -24,7 +25,7 @@ http.createServer((req, res) => {
       sse(res, { ...base, choices: [{ index: 0, delta: { content: 'The tool said: ' + last.content } }] })
       sse(res, { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
     } else {
-      for (const w of ['Hello ', 'from ', 'mock ', 'Mistral.', '\n\n```js\nconsole.log(1)\n```']) sse(res, { ...base, choices: [{ index: 0, delta: { content: w } }] })
+      for (const w of ['**Hello** ', 'from ', 'mock ', 'Mistral.', '\n\n- item one\n- item two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nconsole.log(1)\n```\n\n[a link](https://example.com) <script>alert(1)</script>']) sse(res, { ...base, choices: [{ index: 0, delta: { content: w } }] })
       sse(res, { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
     }
     res.end('data: [DONE]\n\n')

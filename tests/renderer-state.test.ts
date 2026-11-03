@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyChatEvent, settleInterrupted, titleFrom } from '../src/renderer/src/chatState'
-import { applyCodeUpdate, lineDiff, type CodeState } from '../src/renderer/src/codeState'
+import { applyCodeUpdate, lineDiff, replayHistory, type CodeState } from '../src/renderer/src/codeState'
 import type { DisplayItem } from '../src/shared/types'
 
 describe('applyChatEvent', () => {
@@ -71,6 +71,26 @@ describe('regressions found in the e2e run', () => {
     let s: CodeState = { items: [] }
     for (const c of [chunk('notice.', 'n1'), chunk('Reply ', 'a1'), chunk('text', 'a1')]) s = applyCodeUpdate(s, c)
     expect(s.items).toMatchObject([{ text: 'notice.' }, { text: 'Reply text' }])
+  })
+})
+
+describe('replayHistory', () => {
+  it('rebuilds a stored conversation including the user messages, tool calls and title', () => {
+    const s = replayHistory([
+      { sessionUpdate: 'session_info_update', title: 'Fix bug' },
+      { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'fix ' }, messageId: 'u1' },
+      { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'it' }, messageId: 'u1' },
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' }, messageId: 'a1' },
+      { sessionUpdate: 'tool_call', toolCallId: 't', title: 'edit', kind: 'edit', status: 'completed', content: [{ type: 'diff', path: 'a', newText: 'x' }] },
+      { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'thanks' }, messageId: 'u2' }
+    ])
+    expect(s.title).toBe('Fix bug')
+    expect(s.items.map((i) => i.kind)).toEqual(['user', 'agent', 'tool', 'user'])
+    expect(s.items[0]).toMatchObject({ text: 'fix it' })
+  })
+  it('live updates still ignore the echo of the user message', () => {
+    const s = applyCodeUpdate({ items: [] }, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'dup' } })
+    expect(s.items).toEqual([])
   })
 })
 

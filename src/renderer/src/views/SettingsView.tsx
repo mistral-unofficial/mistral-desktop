@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { McpServerConfig, McpServerStatus, SettingsView as SV } from '@shared/types'
-import { argsToText, envToText, parseMcpJson, textToArgs, textToEnv } from '../mcpImport'
+import { argsToText, envToText, headersToText, parseMcpJson, textToArgs, textToEnv, textToHeaders } from '../mcpImport'
+import { ExtensionsSection } from './ExtensionsSection'
 
 export function SettingsView() {
   const [s, setS] = useState<SV>()
@@ -27,7 +28,7 @@ export function SettingsView() {
       const names = new Set(s.mcpServers.map((m) => m.name))
       const fresh = servers.filter((x) => !names.has(x.name))
       await setServers([...s.mcpServers, ...fresh])
-      setNote(`Imported ${fresh.length} server(s)${servers.length - fresh.length ? `, ${servers.length - fresh.length} already existed` : ''}${skipped.length ? `. Skipped (no command, remote servers are not supported yet): ${skipped.join(', ')}` : ''}.`)
+      setNote(`Imported ${fresh.length} server(s)${servers.length - fresh.length ? `, ${servers.length - fresh.length} already existed` : ''}${skipped.length ? `. Skipped (no command or url): ${skipped.join(', ')}` : ''}.`)
       setImportText('')
     } catch (e) {
       setNote(`Could not import: ${(e as Error).message}`)
@@ -63,34 +64,75 @@ export function SettingsView() {
         <p className="muted">Install Vibe with <code>uv tool install mistral-vibe</code>.</p>
       </section>
 
+      <ExtensionsSection status={status} />
+
       <section>
-        <h3>MCP servers (local, stdio)</h3>
-        <p className="muted">Servers run on your machine with your permissions. Only add ones you trust. They are available in Chat and are handed to Vibe in the Code tab.</p>
+        <h3>MCP servers</h3>
+        <p className="muted">Local servers run on your machine with your permissions, so only add ones you trust. Remote servers are reached over https. All of them are available in Chat and are handed to Vibe in the Code tab.</p>
         {s.mcpServers.map((m) => {
           const st = stat(m.id)
+          const remote = m.transport === 'http'
           return (
-            <div key={m.id} className="mcpcard">
+            <div key={m.id} className="mcpcard" data-testid={`server-${m.name}`}>
               <div className="row">
                 <label className="check"><input type="checkbox" checked={m.enabled} onChange={(e) => void edit(m.id, { enabled: e.target.checked })} /> Enabled</label>
                 <input value={m.name} aria-label="Name" onChange={(e) => void edit(m.id, { name: e.target.value })} />
+                <span className="muted">{remote ? 'remote' : 'local'}</span>
                 <span className={`badge ${st?.state ?? ''}`}>{st?.state ?? 'saved'}</span>
                 <button onClick={() => void setServers(s.mcpServers.filter((x) => x.id !== m.id))}>Remove</button>
               </div>
               {st?.error && <div className="warnline">{st.error}</div>}
               {st?.state === 'connected' && <div className="muted">Tools: {st.tools.join(', ') || 'none'}</div>}
-              <label className="field">Command<input value={m.command} onChange={(e) => void edit(m.id, { command: e.target.value })} /></label>
-              <label className="field">Arguments (one per line)<textarea rows={2} defaultValue={argsToText(m.args)} onBlur={(e) => void edit(m.id, { args: textToArgs(e.target.value) })} /></label>
-              <label className="field">Environment (KEY=value per line)<textarea rows={2} defaultValue={envToText(m.env)} onBlur={(e) => void edit(m.id, { env: textToEnv(e.target.value) })} /></label>
+              {remote ? (
+                <>
+                  <label className="field">Server URL<input value={m.url ?? ''} placeholder="https://example.com/mcp" onChange={(e) => void edit(m.id, { url: e.target.value })} /></label>
+                  <label className="field"><span>Headers (<code>Name: value</code> per line) <span className="muted">Stored unencrypted in settings.json. Prefer OAuth where the server supports it.</span></span>
+                    <textarea rows={2} defaultValue={headersToText(m.headers)} onBlur={(e) => void edit(m.id, { headers: textToHeaders(e.target.value) })} />
+                  </label>
+                  <label className="check"><input type="checkbox" checked={!!m.oauth} onChange={(e) => void edit(m.id, { oauth: e.target.checked })} /> Sign in with OAuth when the server asks for it</label>
+                  <OAuthControls id={m.id} state={st?.state} enabled={m.oauth} />
+                </>
+              ) : (
+                <>
+                  <label className="field">Command<input value={m.command} onChange={(e) => void edit(m.id, { command: e.target.value })} /></label>
+                  <label className="field">Arguments (one per line)<textarea rows={2} defaultValue={argsToText(m.args)} onBlur={(e) => void edit(m.id, { args: textToArgs(e.target.value) })} /></label>
+                  <label className="field">Environment (KEY=value per line)<textarea rows={2} defaultValue={envToText(m.env)} onBlur={(e) => void edit(m.id, { env: textToEnv(e.target.value) })} /></label>
+                </>
+              )}
             </div>
           )
         })}
-        <button onClick={() => void setServers([...s.mcpServers, { id: crypto.randomUUID(), name: 'new-server', command: '', args: [], env: {}, enabled: false }])}>＋ Add server</button>
+        <div className="row">
+          <button onClick={() => void setServers([...s.mcpServers, { id: crypto.randomUUID(), name: 'new-server', command: '', args: [], env: {}, enabled: false }])}>＋ Add local server</button>
+          <button onClick={() => void setServers([...s.mcpServers, { id: crypto.randomUUID(), name: 'remote-server', transport: 'http', url: '', headers: {}, oauth: true, command: '', args: [], env: {}, enabled: false }])}>＋ Add remote server</button>
+        </div>
         <h4>Import from JSON</h4>
         <p className="muted">Paste a <code>{'{ "mcpServers": { … } }'}</code> block, for example from <code>claude_desktop_config.json</code>.</p>
         <textarea rows={4} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder='{"mcpServers": {"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}}}' />
         <div className="row"><button disabled={!importText.trim()} onClick={() => void doImport()}>Import</button></div>
         {note && <p role="status" className="muted">{note}</p>}
       </section>
+    </div>
+  )
+}
+
+function OAuthControls({ id, state, enabled }: { id: string; state?: string; enabled?: boolean }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (!enabled) return null
+  const signIn = async (): Promise<void> => {
+    setBusy(true)
+    setErr('')
+    const r = await window.api.mcp.authorize(id)
+    setBusy(false)
+    if (!r.ok) setErr(r.error ?? 'Sign-in failed')
+  }
+  return (
+    <div className="row">
+      {(state === 'needs-auth' || busy) && <button className="primary" disabled={busy} onClick={() => void signIn()}>{busy ? 'Waiting for the browser…' : 'Sign in'}</button>}
+      {state === 'connected' && <button onClick={() => void window.api.mcp.signOut(id)}>Sign out</button>}
+      {state === 'needs-auth' && !busy && <span className="muted">This server needs you to sign in.</span>}
+      {err && <span className="warnline" role="alert">{err}</span>}
     </div>
   )
 }

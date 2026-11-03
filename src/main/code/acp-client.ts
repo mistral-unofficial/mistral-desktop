@@ -8,10 +8,27 @@ export interface AcpAuthMethod {
   description?: string
 }
 
+export interface AcpCapabilities {
+  loadSession?: boolean
+  sessionCapabilities?: { list?: unknown; close?: unknown; fork?: unknown }
+}
+
+export interface AcpSessionInfo {
+  sessionId: string
+  cwd?: string
+  title?: string | null
+  updatedAt?: string | null
+}
+
 export interface AcpPermissionRequest {
   sessionId: string
   toolCall: Record<string, unknown> & { title?: string }
   options: { optionId: string; name: string; kind: string }[]
+}
+
+export interface AcpModes {
+  currentModeId: string
+  availableModes: { id: string; name: string; description?: string }[]
 }
 
 export class AcpError extends Error {
@@ -108,7 +125,7 @@ export class AcpClient extends EventEmitter {
     this.write({ id, error: { code: -32601, message: `Method not supported: ${method}` } })
   }
 
-  initialize(): Promise<{ authMethods?: AcpAuthMethod[]; agentInfo?: { name: string; version: string } }> {
+  initialize(): Promise<{ authMethods?: AcpAuthMethod[]; agentInfo?: { name: string; version: string }; agentCapabilities?: AcpCapabilities }> {
     return this.request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'mistral-desktop', version: '0.1.0' } })
   }
 
@@ -116,8 +133,21 @@ export class AcpClient extends EventEmitter {
     return this.request('authenticate', { methodId })
   }
 
-  newSession(cwd: string, mcpServers: unknown[]): Promise<{ sessionId: string; modes?: { currentModeId: string; availableModes: { id: string; name: string; description?: string }[] } }> {
+  newSession(cwd: string, mcpServers: unknown[]): Promise<{ sessionId: string; modes?: AcpModes }> {
     return this.request('session/new', { cwd, mcpServers })
+  }
+
+  listSessions(cwd: string, cursor?: string): Promise<{ sessions: AcpSessionInfo[]; nextCursor?: string | null }> {
+    return this.request('session/list', { cwd, ...(cursor ? { cursor } : {}) })
+  }
+
+  /** Replays the stored conversation as session/update notifications before resolving. */
+  loadSession(sessionId: string, cwd: string, mcpServers: unknown[]): Promise<{ modes?: AcpModes }> {
+    return this.request('session/load', { sessionId, cwd, mcpServers })
+  }
+
+  closeSession(sessionId: string): Promise<unknown> {
+    return this.request('session/close', { sessionId })
   }
 
   prompt(sessionId: string, text: string): Promise<{ stopReason: string }> {

@@ -85,7 +85,7 @@ Main and renderer talk through a typed IPC layer (contextIsolation on, no node i
 - Security: show manifest permissions before install, never auto-run unsigned bundles without confirmation, keep secrets out of logs.
 
 ## Milestones
-Status: 0 done; 1, 2, 3 (manual stdio servers) and 5 (first version) implemented and tested against mocks; 4 (MCPB) and 6 not started. See README "Known gaps".
+Status: 0-5 implemented and tested against mocks (MCPB install, remote MCP incl. OAuth, Markdown, session resume added). 6 (Vibe browser sign-in against a real account) and 7 (packaging) not started. See README "Known gaps".
 
 0. **Spikes (1–2 days):** install Vibe, drive `vibe-acp` from a script, answer the three open questions above, check MCPB manifest spec version.
 1. **Skeleton:** Electron + React + tabs, IPC, settings, keychain, packaging for macOS, Windows and Linux.
