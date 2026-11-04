@@ -212,3 +212,13 @@ select.warn { border-color: var(--warn); color: var(--warn); }
   .settings-nav { width: auto; flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border); padding: 10px 44px 10px 10px; overflow-x: auto; }
   .settings-nav h2 { display: none; }
 }
+
+/* Extension install dialog: header / scrolling body / pinned footer */
+.modal.install { flex-direction: column; width: min(600px, 100%); height: auto; max-height: min(86vh, 100%); align-self: center; padding: 0; }
+.install-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.install-head h3 { margin: 0; }
+.install-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 20px 12px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.install-body p { margin: 6px 0; }
+.install-body h4 { margin: 10px 0 0; }
+.install-foot { padding: 12px 20px; border-top: 1px solid var(--border); }
+.install-foot .row { margin-top: 0; justify-content: flex-end; }

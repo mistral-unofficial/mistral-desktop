@@ -58,35 +58,40 @@ function InstallDialog({ preview, onClose }: { preview: ExtensionPreview; onClos
   }
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="modal" role="dialog" aria-modal="true" aria-label={`Install ${preview.displayName}`}>
-        <div className="row" style={{ marginTop: 0 }}>
+      <div className="modal install" role="dialog" aria-modal="true" aria-label={`Install ${preview.displayName}`}>
+        <header className="install-head">
           {preview.icon && <img src={preview.icon} alt="" width={40} height={40} />}
           <div>
-            <h3 style={{ margin: 0 }}>{preview.displayName} <span className="muted">v{preview.version}</span></h3>
+            <h3>{preview.displayName} <span className="muted">v{preview.version}</span></h3>
             <span className="muted">{preview.author ? `by ${preview.author}` : 'Unknown author'}</span>
           </div>
+        </header>
+        <div className="install-body">
+          {preview.description && <p>{preview.description}</p>}
+          {preview.previous && <p className="muted">Updating from v{preview.previous.version}. Your settings are kept.</p>}
+          {Object.keys(preview.userConfig).length > 0 && (
+            <>
+              <h4>Settings</h4>
+              <p className="muted">These values are passed to the extension (as environment variables / arguments, as defined by its manifest).</p>
+              <ConfigForm fields={preview.userConfig} values={values} onChange={(v) => { setValues(v); setErrors(undefined); setError('') }} errors={errors} secretKeys={secretKeys} />
+            </>
+          )}
+          <div className="notice">
+            <strong>This extension runs code on your computer</strong> with your user's permissions, so it can read your files and use the network.
+            {' '}Only install extensions from people you trust.
+            <div className="muted">{preview.signed ? 'The bundle contains a signature, but this app does not verify it.' : 'The bundle is not signed.'}</div>
+          </div>
+          <div className="muted">Will run: <code>{describeCommand(preview.command, preview.args)}</code> ({preview.serverType})</div>
+          {preview.warnings.map((w) => <div key={w} className="muted">• {w}</div>)}
+          {preview.tools.length > 0 && <Collapsible summary={`${preview.tools.length} tool${preview.tools.length === 1 ? '' : 's'}`}><ul>{preview.tools.map((t) => <li key={t.name}><strong>{t.name}</strong>{t.description ? <span className="muted"> {t.description}</span> : null}</li>)}</ul></Collapsible>}
         </div>
-        <p>{preview.description}</p>
-        {preview.previous && <p className="muted">Updating from v{preview.previous.version}. Your settings are kept.</p>}
-        <div className="notice">
-          <strong>This extension runs code on your computer</strong> with your user's permissions, so it can read your files and use the network.
-          {' '}Only install extensions from people you trust.
-          <div className="muted">{preview.signed ? 'The bundle contains a signature, but this app does not verify it.' : 'The bundle is not signed.'}</div>
-        </div>
-        <div className="muted">Will run: <code>{describeCommand(preview.command, preview.args)}</code> ({preview.serverType})</div>
-        {preview.warnings.map((w) => <div key={w} className="muted">• {w}</div>)}
-        {preview.tools.length > 0 && <Collapsible summary={`${preview.tools.length} tool${preview.tools.length === 1 ? '' : 's'}`}><ul>{preview.tools.map((t) => <li key={t.name}><strong>{t.name}</strong>{t.description ? <span className="muted"> {t.description}</span> : null}</li>)}</ul></Collapsible>}
-        {Object.keys(preview.userConfig).length > 0 && (
-          <>
-            <h4>Settings</h4>
-            <ConfigForm fields={preview.userConfig} values={values} onChange={(v) => { setValues(v); setErrors(undefined); setError('') }} errors={errors} secretKeys={secretKeys} />
-          </>
-        )}
-        {error && <div className="warnline" role="alert">{error}</div>}
-        <div className="row">
-          <button className="primary" disabled={busy} onClick={() => void install()}>{preview.previous ? 'Update' : 'Install'}</button>
-          <button disabled={busy} onClick={cancel}>Cancel</button>
-        </div>
+        <footer className="install-foot">
+          {error && <div className="warnline" role="alert">{error}</div>}
+          <div className="row">
+            <button className="primary" disabled={busy} onClick={() => void install()}>{preview.previous ? 'Update' : 'Install'}</button>
+            <button disabled={busy} onClick={cancel}>Cancel</button>
+          </div>
+        </footer>
       </div>
     </div>
   )
