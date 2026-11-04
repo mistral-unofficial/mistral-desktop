@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { SettingsView as SV } from '@shared/types'
 import { ChatView } from './views/ChatView'
 import { CodeView } from './views/CodeView'
+import { WorkView } from './views/WorkView'
 import { SettingsView } from './views/SettingsView'
 import type { SettingsSection } from './settingsSections'
 import { AccountMenu } from './AccountMenu'
@@ -56,6 +57,9 @@ export function App() {
   const chatSlot = useCallback((el: HTMLElement | null): void => {
     if (el) setSlots((s) => (s.chat === el ? s : { ...s, chat: el }))
   }, [])
+  const workSlot = useCallback((el: HTMLElement | null): void => {
+    if (el) setSlots((s) => (s.work === el ? s : { ...s, work: el }))
+  }, [])
   const codeSlot = useCallback((el: HTMLElement | null): void => {
     if (el) setSlots((s) => (s.code === el ? s : { ...s, code: el }))
   }, [])
@@ -75,13 +79,14 @@ export function App() {
       <div className="body">
         <aside className="appsidebar" hidden={!open}>
           <div className="segtabs" role="tablist">
-            {(['chat', 'code'] as SidebarTab[]).map((t) => (
+            {(['work', 'chat', 'code'] as SidebarTab[]).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'seg active' : 'seg'} onClick={() => pick(t)}>
-                {t === 'chat' ? 'Chat' : 'Code'}
+                {t === 'chat' ? 'Chat' : t === 'work' ? 'Work' : 'Code'}
               </button>
             ))}
           </div>
           <div className="slot" hidden={tab !== 'chat'} ref={chatSlot} />
+          <div className="slot" hidden={tab !== 'work'} ref={workSlot} />
           <div className="slot" hidden={tab !== 'code'} ref={codeSlot} />
           <footer className="sidefoot">
             <AccountMenu settings={settings} onSettings={() => openSettings()} />
@@ -96,6 +101,7 @@ export function App() {
         <SidebarSlots.Provider value={slots}>
           <main>
             <section hidden={tab !== 'chat'} className="pane"><ChatView active={tab === 'chat' && !showSettings} goSettings={openSettings} /></section>
+            <section hidden={tab !== 'work'} className="pane"><WorkView active={tab === 'work' && !showSettings} goSettings={openSettings} /></section>
             <section hidden={tab !== 'code'} className="pane"><CodeView active={tab === 'code' && !showSettings} goSettings={openSettings} /></section>
           </main>
         </SidebarSlots.Provider>

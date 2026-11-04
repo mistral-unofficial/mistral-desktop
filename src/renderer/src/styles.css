@@ -31,7 +31,8 @@ code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
 .appsidebar[hidden] { display: none; }
 .segtabs { display: flex; gap: 2px; margin: 10px; padding: 3px; background: var(--bg3); border-radius: 10px; }
 .seg { flex: 1; border: none; background: none; padding: 6px 10px; border-radius: 8px; color: var(--muted); }
-.seg.active { background: var(--bg); color: var(--fg); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
+.seg:hover:not(.active) { color: var(--accent); }
+.seg.active, .seg.active:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); font-weight: 600; box-shadow: none; }
 .slot { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
 .slot[hidden] { display: none; }
 .sidefoot { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--border); }

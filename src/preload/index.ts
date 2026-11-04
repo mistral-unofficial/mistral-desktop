@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Api } from '../shared/api'
-import type { AccountInfo, ChatEvent, CodeEvent, InstalledExtension, McpServerStatus } from '../shared/types'
+import type { AccountInfo, ChatEvent, CodeEvent, InstalledExtension, McpServerStatus, WorkEvent } from '../shared/types'
 
 const inv = <T>(ch: string, ...a: unknown[]): Promise<T> => ipcRenderer.invoke(ch, ...a) as Promise<T>
 const sub = <A extends unknown[]>(ch: string, cb: (...a: A) => void): (() => void) => {
@@ -37,6 +37,16 @@ const api: Api = {
     save: (c) => inv('conv:save', c),
     remove: (id) => inv('conv:remove', id),
     search: (q) => inv('conv:search', q)
+  },
+  work: {
+    status: () => inv('work:status'),
+    signIn: () => inv('work:signIn'),
+    list: (c) => inv('work:list', c),
+    get: (id) => inv('work:get', id),
+    remove: (id) => inv('work:remove', id),
+    send: (r) => inv('work:send', r),
+    cancel: (id) => inv('work:cancel', id),
+    onEvent: (cb) => sub<[string, WorkEvent]>('work:event', cb)
   },
   mcp: {
     status: () => inv('mcp:status'),

@@ -1,12 +1,13 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
-import type { ChatEvent, Conversation, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
+import type { ChatEvent, Conversation, WorkEvent, WorkGetResult, WorkListResult, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
 import { runChat } from './chat/run'
 import { listModels } from './chat/mistral'
 import { CodeService } from './code/service'
 import { AccountService } from './account'
 import { WebSession } from './web-session'
+import { WorkClient } from './work/client'
 import { ConversationStore } from './conversations'
 import { McpHost, toAcpServers } from './mcp/host'
 import { OAuthStore } from './mcp/oauth'
@@ -194,6 +195,51 @@ app.whenReady().then(async () => {
   ipcMain.handle('conv:save', (_e, c: Conversation) => convs.save(c))
   ipcMain.handle('conv:remove', (_e, id: string) => convs.remove(id))
   ipcMain.handle('conv:search', (_e, q: string) => convs.search(q))
+
+  // ---- work (internal Le Chat "Work" API, through the app's web session) ----
+  const work = new WorkClient(web)
+  const workRuns = new Map<string, AbortController>()
+  const workErr = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+  ipcMain.handle('work:status', async () => ({ signedIn: await web.signedIn() }))
+  ipcMain.handle('work:signIn', async () => {
+    await web.signInInWindow('https://chat.mistral.ai/work')
+    return { signedIn: await web.signedIn() }
+  })
+  ipcMain.handle('work:list', async (_e, cursor?: string): Promise<WorkListResult> => {
+    try {
+      return { ok: true, ...(await work.list(cursor)) }
+    } catch (e) {
+      return { ok: false, error: workErr(e) }
+    }
+  })
+  ipcMain.handle('work:get', async (_e, id: string): Promise<WorkGetResult> => {
+    try {
+      return { ok: true, chat: await work.get(id) }
+    } catch (e) {
+      return { ok: false, error: workErr(e) }
+    }
+  })
+  ipcMain.handle('work:remove', async (_e, id: string): Promise<string | undefined> => {
+    try {
+      await work.remove(id)
+    } catch (e) {
+      return workErr(e)
+    }
+  })
+  ipcMain.handle('work:send', async (_e, req: { requestId: string; chatId?: string; text: string }) => {
+    const emit = (e: WorkEvent): void => send('work:event', req.requestId, e)
+    const ac = new AbortController()
+    workRuns.set(req.requestId, ac)
+    try {
+      await work.send({ chatId: req.chatId, text: req.text }, emit, ac.signal)
+    } catch (e) {
+      if (!ac.signal.aborted) emit({ type: 'error', message: workErr(e) })
+    } finally {
+      workRuns.delete(req.requestId)
+      emit({ type: 'done' })
+    }
+  })
+  ipcMain.handle('work:cancel', (_e, requestId: string) => workRuns.get(requestId)?.abort())
 
   // ---- mcp ----
   ipcMain.handle('mcp:status', () => mcp.status())

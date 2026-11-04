@@ -247,3 +247,33 @@ export type WorktreeRemoveResult = { ok: true } | { ok: false; error: string; di
 export type CodeResumeResult =
   | { status: 'ready'; modes: CodeMode[]; currentMode: string; configOptions: CodeConfigOption[]; history: (Record<string, unknown> & { sessionUpdate: string })[] }
   | { status: 'error'; message: string }
+
+// ---- Work (internal chat.mistral.ai Work API) ----
+export interface WorkChatSummary {
+  id: string
+  title: string
+  updatedAt: number
+  pinned: boolean
+}
+export interface WorkMessage {
+  id: string
+  role: 'user' | 'assistant'
+  /** The visible answer (reasoning excluded). */
+  text: string
+  /** The model's reasoning, when the server sends it. */
+  reasoning: string
+  status: 'in-progress' | 'success' | 'error' | string
+}
+export interface WorkChat {
+  id: string
+  title: string
+  messages: WorkMessage[]
+}
+export type WorkStatus = { signedIn: boolean }
+export type WorkListResult = { ok: true; chats: WorkChatSummary[]; nextCursor?: string } | { ok: false; error: string }
+export type WorkGetResult = { ok: true; chat: WorkChat } | { ok: false; error: string }
+export type WorkEvent =
+  /** A full snapshot of the chat while it streams (messages in order). */
+  | { type: 'state'; chat: WorkChat }
+  | { type: 'error'; message: string }
+  | { type: 'done' }

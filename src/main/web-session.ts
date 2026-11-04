@@ -92,6 +92,13 @@ export class WebSession implements WebAuthWindows {
     return win
   }
 
+  /** Runs JavaScript in the signed-in page of chat.mistral.ai (same origin as the site's own API). */
+  async evaluate(js: string): Promise<unknown> {
+    if (!(await this.signedIn())) return undefined
+    const win = await this.page()
+    return win.webContents.executeJavaScript(js)
+  }
+
   /** Calls a tRPC query of the website (e.g. "billing.budget") and returns its data, or undefined on any failure. */
   async query(procedure: string): Promise<unknown> {
     if (!/^[A-Za-z]+\.[A-Za-z]+$/.test(procedure)) return undefined

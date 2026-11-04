@@ -1,4 +1,4 @@
-import type { AccountInfo, BrowserSignInResult, CodeConfigResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorktreeCreateResult, WorktreeRemoveResult } from './types'
+import type { AccountInfo, BrowserSignInResult, CodeConfigResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorkEvent, WorkGetResult, WorkListResult, WorkStatus, WorktreeCreateResult, WorktreeRemoveResult } from './types'
 
 /** The API exposed on `window.api` by the preload script. */
 export interface Api {
@@ -35,6 +35,20 @@ export interface Api {
     remove(id: string): Promise<void>
     /** Case-insensitive search over titles and message text, newest first. */
     search(query: string): Promise<ConversationHit[]>
+  }
+  /** Le Chat "Work" chats, through the website's internal API (needs the Le Chat web sign-in). */
+  work: {
+    status(): Promise<WorkStatus>
+    /** Opens chat.mistral.ai in an app window for sign-in; resolves when it is closed. */
+    signIn(): Promise<WorkStatus>
+    list(cursor?: string): Promise<WorkListResult>
+    get(id: string): Promise<WorkGetResult>
+    /** Resolves to an error message, or undefined on success. */
+    remove(id: string): Promise<string | undefined>
+    /** Sends a message (a new chat without `chatId`); progress arrives through `onEvent` until `done`. */
+    send(req: { requestId: string; chatId?: string; text: string }): Promise<void>
+    cancel(requestId: string): Promise<void>
+    onEvent(cb: (requestId: string, e: WorkEvent) => void): () => void
   }
   mcp: {
     status(): Promise<McpServerStatus[]>
