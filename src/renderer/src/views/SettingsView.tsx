@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { AccountInfo, McpServerConfig, McpServerStatus, SettingsView as SV } from '@shared/types'
 import { argsToText, envToText, headersToText, parseMcpJson, textToArgs, textToEnv, textToHeaders } from '../mcpImport'
+import { SETTINGS_SECTIONS, type SettingsSection } from '../settingsSections'
 import { ExtensionsSection } from './ExtensionsSection'
 
-export function SettingsView() {
+export function SettingsView({ section, onSection }: { section: SettingsSection; onSection: (s: SettingsSection) => void }) {
   const [s, setS] = useState<SV>()
   const [key, setKey] = useState('')
   const [status, setStatus] = useState<McpServerStatus[]>([])
@@ -61,10 +62,20 @@ export function SettingsView() {
     }
   }
 
+  const label = SETTINGS_SECTIONS.find((x) => x.id === section)?.label ?? ''
   return (
-    <div className="settings">
-      <h2>Settings</h2>
+    <>
+      <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+        <h2>Settings</h2>
+        {SETTINGS_SECTIONS.map((x) => (
+          <button key={x.id} id={`settings-tab-${x.id}`} role="tab" aria-selected={section === x.id} aria-controls="settings-panel" className={section === x.id ? 'snavitem active' : 'snavitem'} onClick={() => onSection(x.id)}>{x.label}</button>
+        ))}
+      </nav>
+      <div className="settings" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>
+        <h2>{label}</h2>
 
+        {section === 'account' && (
+          <>
       <section>
         <h3>Le Chat</h3>
         <p className="muted">Your Le Chat web account. Shows your name, organisation and budget in the sidebar. It does not give the app access to the Mistral API; that is what Vibe Code below is for.</p>
@@ -102,25 +113,17 @@ export function SettingsView() {
       </section>
 
       <section>
-        <h3>Profile</h3>
-        <p className="muted">Your name, email and organisation come from your Mistral web account once you are signed in there. Enter them here only as a fallback for when you are not. It stays on this computer.</p>
-        <label className="field">Name<input value={s.profileName} onChange={(e) => void patch({ profileName: e.target.value })} /></label>
-        <label className="field">Email<input type="email" value={s.profileEmail} onChange={(e) => void patch({ profileEmail: e.target.value })} /></label>
-      </section>
-
-      <section>
-        <h3>Chat</h3>
-        <label className="field">Default model<input value={s.model} onChange={(e) => void patch({ model: e.target.value })} /></label>
-        <label className="field">API base URL<input value={s.apiBase} onChange={(e) => void patch({ apiBase: e.target.value })} /></label>
-      </section>
-
-      <section>
-        <h3>Code (Vibe)</h3>
+        <h3>Vibe setup</h3>
+        <p className="muted">The Code tab runs Mistral Vibe on this computer.</p>
         <label className="field"><span>Path to <code>vibe-acp</code> <span className="muted">(empty = auto-detect)</span></span><input value={s.vibePath} placeholder="vibe-acp" onChange={(e) => void patch({ vibePath: e.target.value })} /></label>
         <label className="field"><span>Vibe home <span className="muted">(optional, isolates Vibe's config and sessions)</span></span><input value={s.vibeHome} onChange={(e) => void patch({ vibeHome: e.target.value })} /></label>
         <p className="muted">Install Vibe with <code>uv tool install mistral-vibe</code>.</p>
       </section>
+          </>
+        )}
 
+        {section === 'connectors' && (
+          <>
       <ExtensionsSection status={status} />
 
       <section>
@@ -169,7 +172,27 @@ export function SettingsView() {
         <div className="row"><button disabled={!importText.trim()} onClick={() => void doImport()}>Import</button></div>
         {note && <p role="status" className="muted">{note}</p>}
       </section>
-    </div>
+          </>
+        )}
+
+        {section === 'general' && (
+          <>
+      <section>
+        <h3>Profile</h3>
+        <p className="muted">Your name, email and organisation come from your Mistral web account once you are signed in there. Enter them here only as a fallback for when you are not. It stays on this computer.</p>
+        <label className="field">Name<input value={s.profileName} onChange={(e) => void patch({ profileName: e.target.value })} /></label>
+        <label className="field">Email<input type="email" value={s.profileEmail} onChange={(e) => void patch({ profileEmail: e.target.value })} /></label>
+      </section>
+
+      <section>
+        <h3>Chat</h3>
+        <label className="field">Default model<input value={s.model} onChange={(e) => void patch({ model: e.target.value })} /></label>
+        <label className="field">API base URL<input value={s.apiBase} onChange={(e) => void patch({ apiBase: e.target.value })} /></label>
+      </section>
+          </>
+        )}
+      </div>
+    </>
   )
 }
 

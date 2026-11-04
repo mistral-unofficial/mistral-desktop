@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatEvent, Conversation, ConversationHit, DisplayItem, McpServerStatus, SettingsView } from '@shared/types'
 import { applyChatEvent, newConversation, settleInterrupted, titleFrom } from '../chatState'
 import { Collapsible, Markdown, PlainText } from '../components'
+import type { SettingsSection } from '../settingsSections'
 import { SidebarPortal } from '../sidebar'
 
 type Summary = Pick<Conversation, 'id' | 'title' | 'updatedAt'>
 
-export function ChatView({ goSettings, active }: { goSettings: () => void; active: boolean }) {
+export function ChatView({ goSettings, active }: { goSettings: (section?: SettingsSection) => void; active: boolean }) {
   const [settings, setSettings] = useState<SettingsView>()
   const [models, setModels] = useState<string[]>([])
   const [list, setList] = useState<Summary[]>([])
@@ -154,10 +155,10 @@ export function ChatView({ goSettings, active }: { goSettings: () => void; activ
           </label>
         </header>
         {needAuth.length > 0 && (
-          <div className="banner">{needAuth.map((m) => m.name).join(', ')} {needAuth.length === 1 ? 'needs' : 'need'} you to sign in. <button className="linklike" onClick={goSettings}>Open Settings</button></div>
+          <div className="banner">{needAuth.map((m) => m.name).join(', ')} {needAuth.length === 1 ? 'needs' : 'need'} you to sign in. <button className="linklike" onClick={() => goSettings('connectors')}>Open Settings</button></div>
         )}
         {settings && !settings.hasApiKey && (
-          <div className="banner">No Mistral API key yet. <button className="linklike" onClick={goSettings}>Add one in Settings</button> to start chatting.</div>
+          <div className="banner">No Mistral API key yet. <button className="linklike" onClick={() => goSettings('account')}>Add one in Settings</button> to start chatting.</div>
         )}
         <div className="messages" aria-live="polite">
           {!conv.items.length && <div className="empty">Ask anything. Tools from your MCP servers are available to the model.</div>}

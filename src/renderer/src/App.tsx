@@ -3,6 +3,7 @@ import type { SettingsView as SV } from '@shared/types'
 import { ChatView } from './views/ChatView'
 import { CodeView } from './views/CodeView'
 import { SettingsView } from './views/SettingsView'
+import type { SettingsSection } from './settingsSections'
 import { AccountMenu } from './AccountMenu'
 import { SidebarSlots, type SidebarTab } from './sidebar'
 
@@ -18,6 +19,12 @@ const readOpen = (): boolean => {
 export function App() {
   const [tab, setTab] = useState<SidebarTab>('chat')
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('account')
+  /** Opens Settings, on the given section (Account by default). */
+  const openSettings = (section: SettingsSection = 'account'): void => {
+    setSettingsSection(section)
+    setShowSettings(true)
+  }
   const [open, setOpen] = useState(readOpen)
   const [slots, setSlots] = useState<Partial<Record<SidebarTab, HTMLElement | null>>>({})
   const [settings, setSettings] = useState<SV>()
@@ -36,7 +43,7 @@ export function App() {
 
   const pick = (t: SidebarTab): void => setTab(t)
   // Cmd+, (Ctrl+, elsewhere) comes from the app menu.
-  useEffect(() => window.api.app.onOpenSettings(() => setShowSettings(true)), [])
+  useEffect(() => window.api.app.onOpenSettings(() => openSettings()), [])
   useEffect(() => {
     if (!showSettings) return
     const onKey = (e: KeyboardEvent): void => {
@@ -77,8 +84,8 @@ export function App() {
           <div className="slot" hidden={tab !== 'chat'} ref={chatSlot} />
           <div className="slot" hidden={tab !== 'code'} ref={codeSlot} />
           <footer className="sidefoot">
-            <AccountMenu settings={settings} onSettings={() => setShowSettings(true)} />
-            <button className={showSettings ? 'iconbtn cog active' : 'iconbtn cog'} aria-label="Settings" aria-haspopup="dialog" title="Settings" onClick={() => setShowSettings(true)}>
+            <AccountMenu settings={settings} onSettings={() => openSettings()} />
+            <button className={showSettings ? 'iconbtn cog active' : 'iconbtn cog'} aria-label="Settings" aria-haspopup="dialog" title="Settings" onClick={() => openSettings()}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
@@ -88,16 +95,16 @@ export function App() {
         </aside>
         <SidebarSlots.Provider value={slots}>
           <main>
-            <section hidden={tab !== 'chat'} className="pane"><ChatView active={tab === 'chat' && !showSettings} goSettings={() => setShowSettings(true)} /></section>
-            <section hidden={tab !== 'code'} className="pane"><CodeView active={tab === 'code' && !showSettings} goSettings={() => setShowSettings(true)} /></section>
+            <section hidden={tab !== 'chat'} className="pane"><ChatView active={tab === 'chat' && !showSettings} goSettings={openSettings} /></section>
+            <section hidden={tab !== 'code'} className="pane"><CodeView active={tab === 'code' && !showSettings} goSettings={openSettings} /></section>
           </main>
         </SidebarSlots.Provider>
       </div>
       {showSettings && (
         <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowSettings(false) }}>
-          <div className="modal" role="dialog" aria-modal="true" aria-label="Settings">
+          <div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
             <button className="iconbtn close" aria-label="Close settings" title="Close (Esc)" onClick={() => setShowSettings(false)}>✕</button>
-            <SettingsView />
+            <SettingsView section={settingsSection} onSection={setSettingsSection} />
           </div>
         </div>
       )}

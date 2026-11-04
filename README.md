@@ -14,7 +14,8 @@ npm run build && npm start
 
 - **Chat** needs a Mistral API key (Settings → Mistral API key, or `MISTRAL_API_KEY` in the environment).
 - **Code** needs Vibe: `uv tool install mistral-vibe`. The app looks for `vibe-acp` on `PATH` and in `~/.local/bin`, or use the path in Settings. The key from Settings is passed to Vibe; if Vibe offers browser sign-in the Code tab shows a button for it.
-- **MCP servers** (Settings) come in three kinds. All are available to Chat as tools (each call needs your approval unless you tick "Auto-approve tools") and are handed to Vibe in the Code tab.
+- **Settings** (cog, bottom left) is a window with a side panel: **Account** (Le Chat sign-in, Mistral/Vibe Code sign-in and API key, and the `vibe-acp` setup), **Connectors** (extensions and MCP servers) and **General** (profile, chat defaults).
+- **MCP servers** (Settings → Connectors) come in three kinds. All are available to Chat as tools (each call needs your approval unless you tick "Auto-approve tools") and are handed to Vibe in the Code tab.
   - **Extensions (`.mcpb`)**: click *Install extension…* (or drop a file). You see what it will run, fill in its settings (secrets go to the OS keychain), and it starts automatically. Settings can be changed later, extensions can be disabled or uninstalled. Updating a bundle keeps your settings.
   - **Local servers**: any stdio command, added by hand or by pasting a `{ "mcpServers": … }` block (e.g. from `claude_desktop_config.json`; entries with a `url` become remote servers).
   - **Remote servers**: a URL (streamable HTTP, with automatic fallback to legacy SSE), optional headers, and OAuth sign-in (*Sign in* opens your browser; tokens are kept in the keychain).

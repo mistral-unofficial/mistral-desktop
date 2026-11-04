@@ -5,13 +5,14 @@ import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '.
 import { Collapsible, Diff, Markdown, PlainText } from '../components'
 import { MentionTextarea } from '../MentionTextarea'
 import { mergePending, type PendingSession } from '../sessions'
+import type { SettingsSection } from '../settingsSections'
 import { SidebarPortal } from '../sidebar'
 import { WorkspaceList, folderName } from './WorkspaceList'
 
 type Status = 'idle' | 'starting' | 'ready' | 'needs-auth' | 'error' | 'exited'
 interface Perm { requestId: string; title: string; options: PermissionOption[] }
 
-export function CodeView({ goSettings, active }: { goSettings: () => void; active: boolean }) {
+export function CodeView({ goSettings, active }: { goSettings: (section?: SettingsSection) => void; active: boolean }) {
   const [folder, setFolder] = useState<string>()
   const [workspaces, setWorkspaces] = useState<CodeWorkspace[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string>()
@@ -318,14 +319,14 @@ export function CodeView({ goSettings, active }: { goSettings: () => void; activ
           <p>{message}</p>
           <div className="row">
             {auth?.methods.map((m) => <button key={m.id} className="primary" onClick={() => void signIn(m.id)}>{m.name}</button>)}
-            <button onClick={goSettings}>Use an API key instead</button>
+            <button onClick={() => goSettings('account')}>Use an API key instead</button>
           </div>
         </div>
       )}
       {(status === 'error' || status === 'exited') && (
         <div className="banner error" role="alert">
           <p>{message}</p>
-          <div className="row"><button onClick={() => void begin(folder)}>Retry</button><button onClick={goSettings}>Settings</button></div>
+          <div className="row"><button onClick={() => void begin(folder)}>Retry</button><button onClick={() => goSettings('account')}>Settings</button></div>
         </div>
       )}
       <div className="messages">
