@@ -1,7 +1,7 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
-import type { ChatEvent, Conversation, WorkEvent, WorkGetResult, WorkListResult, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
+import type { ChatEvent, Conversation, WorkAnswer, WorkEvent, WorkGetResult, WorkListResult, ExtensionPreview, McpServerConfig, Settings, UserConfigValue, WireMessage } from '../shared/types'
 import { runChat } from './chat/run'
 import { listModels } from './chat/mistral'
 import { CodeService } from './code/service'
@@ -226,19 +226,21 @@ app.whenReady().then(async () => {
       return workErr(e)
     }
   })
-  ipcMain.handle('work:send', async (_e, req: { requestId: string; chatId?: string; text: string }) => {
-    const emit = (e: WorkEvent): void => send('work:event', req.requestId, e)
+  const workRun = async (requestId: string, run: (emit: (e: WorkEvent) => void, signal: AbortSignal) => Promise<unknown>): Promise<void> => {
+    const emit = (e: WorkEvent): void => send('work:event', requestId, e)
     const ac = new AbortController()
-    workRuns.set(req.requestId, ac)
+    workRuns.set(requestId, ac)
     try {
-      await work.send({ chatId: req.chatId, text: req.text }, emit, ac.signal)
+      await run(emit, ac.signal)
     } catch (e) {
       if (!ac.signal.aborted) emit({ type: 'error', message: workErr(e) })
     } finally {
-      workRuns.delete(req.requestId)
+      workRuns.delete(requestId)
       emit({ type: 'done' })
     }
-  })
+  }
+  ipcMain.handle('work:send', (_e, req: { requestId: string; chatId?: string; text: string }) => workRun(req.requestId, (emit, signal) => work.send({ chatId: req.chatId, text: req.text }, emit, signal)))
+  ipcMain.handle('work:answer', (_e, req: { requestId: string; chatId: string } & WorkAnswer) => workRun(req.requestId, (emit, signal) => work.answer(req, emit, signal)))
   ipcMain.handle('work:cancel', (_e, requestId: string) => workRuns.get(requestId)?.abort())
 
   // ---- mcp ----

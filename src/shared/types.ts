@@ -257,6 +257,26 @@ export interface WorkChatSummary {
   updatedAt: number
   pinned: boolean
 }
+export interface WorkQuestion {
+  question: string
+  options: string[]
+}
+/** A pause in the agent's turn that waits for the user (e.g. "ask_user_question"). */
+export interface WorkCallback {
+  id: string
+  name: string
+  /** 'pending' while it waits for an answer. */
+  status: 'pending' | 'submitted' | string
+  questions: WorkQuestion[]
+  /** The submitted answers, in question order. */
+  answers?: string[]
+}
+/** The user's answer to a pending question callback. */
+export interface WorkAnswer {
+  messageId: string
+  callbackId: string
+  values: string[]
+}
 export interface WorkMessage {
   id: string
   role: 'user' | 'assistant'
@@ -265,6 +285,7 @@ export interface WorkMessage {
   /** The model's reasoning, when the server sends it. */
   reasoning: string
   status: 'in-progress' | 'success' | 'error' | string
+  callbacks?: WorkCallback[]
 }
 export interface WorkChat {
   id: string

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { WorkChat, WorkChatSummary, WorkEvent } from '../../shared/types'
+import type { WorkAnswer, WorkChat, WorkChatSummary, WorkEvent } from '../../shared/types'
 import { StreamState, linearize, parseFrames, toSummary, toWorkMessage, type RawMessage } from './protocol'
 
 /**
@@ -14,7 +14,8 @@ export interface WorkPage {
 }
 
 const TRPC_HEADERS = { 'x-trpc-source': 'nextjs-react' }
-const CALLBACKS = ['ask_user_question', 'ask_user_confirmation', 'ask_enable_skill', 'enable_connector', 'reconnect_connector', 'ask_retry_or_continue_rate_limit', 'collect_workflow_input', 'delegate_workflow_execution']
+/** Only the pauses this app can show; advertising more would let the agent stall on a prompt nobody can answer. */
+const CALLBACKS = ['ask_user_question']
 
 export class WorkError extends Error {}
 
@@ -89,6 +90,10 @@ export class WorkClient {
     }
   }
 
+  private common(): Record<string, unknown> {
+    return { clientPromptData: { currentDate: new Date().toISOString().slice(0, 10), userTimezone: tzLabel() }, transcriptionsMetadata: [], reviewComments: [], disabledFeatures: [], stableAnonymousIdentifier: randomUUID().slice(0, 7), supportedTaskCallbacks: CALLBACKS }
+  }
+
   /**
    * Sends a message (creating the chat when `chatId` is missing) and reports the chat's growing state until the
    * server finishes. Resolves with the final chat; failures are reported through `emit` and rejected.
@@ -98,7 +103,7 @@ export class WorkClient {
     const text = req.text.trim()
     if (!text) throw new WorkError('Empty message')
     const state = new StreamState()
-    const common = { clientPromptData: { currentDate: new Date().toISOString().slice(0, 10), userTimezone: tzLabel() }, transcriptionsMetadata: [], reviewComments: [], disabledFeatures: [], stableAnonymousIdentifier: randomUUID().slice(0, 7), supportedTaskCallbacks: CALLBACKS }
+    const common = this.common()
     let body: Record<string, unknown>
     if (req.chatId) {
       const [meta, raw] = await Promise.all([this.trpc('chat.byId', { id: req.chatId }, 'query') as Promise<{ id: string; features?: string[]; integrations?: unknown[]; libraries?: unknown[]; modelConfig?: unknown } & Parameters<typeof toSummary>[0]>, this.rawMessages(req.chatId)])
@@ -112,9 +117,25 @@ export class WorkClient {
       const cfg = await this.newChatConfig()
       body = { content: [{ type: 'text', text }], incognito: false, files: [], features: [...new Set([...(cfg.tools ?? []), 'agentic-harness'])], integrations: [], libraries: [], modelConfig: cfg.modelConfig ?? { model_alias: 'glm-5-latest-short', reasoning_effort: 'low' }, mode: 'create', productType: 'work', ...common }
     }
+    return this.stream('/api/chat', body, state, req.chatId ?? '', emit, signal)
+  }
+
+  /** Answers a pending question of the agent; the server then continues the same assistant message. */
+  async answer(req: { chatId: string } & WorkAnswer, emit: (e: WorkEvent) => void, signal?: AbortSignal): Promise<WorkChat | undefined> {
+    await this.need()
+    if (!req.values.length || req.values.some((v) => !v.trim())) throw new WorkError('Empty answer')
+    const [meta, raw] = await Promise.all([this.trpc('chat.byId', { id: req.chatId }, 'query') as Promise<{ id: string; modelConfig?: unknown } & Parameters<typeof toSummary>[0]>, this.rawMessages(req.chatId)])
+    const state = new StreamState()
+    state.seed(meta, linearize(raw))
+    const { clientPromptData: _c, transcriptionsMetadata: _t, reviewComments: _r, disabledFeatures: _d, stableAnonymousIdentifier: _s, ...resume } = this.common()
+    const body = { chatId: req.chatId, messageId: req.messageId, ...resume, modelConfig: meta.modelConfig, callbackResults: [{ callbackId: req.callbackId, callbackName: 'ask_user_question', result: req.values.map((v) => v.trim()) }] }
+    return this.stream('/api/chat/resume', body, state, req.chatId, emit, signal)
+  }
+
+  private async stream(url: string, body: Record<string, unknown>, state: StreamState, chatIdIn: string, emit: (e: WorkEvent) => void, signal?: AbortSignal): Promise<WorkChat | undefined> {
     const sid = randomUUID()
     const start = `(() => { window.__work = window.__work || {}; const s = window.__work[${lit(sid)}] = { buf: '', done: false, err: null, ac: new AbortController() };
-      (async () => { try { const res = await fetch('/api/chat', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify(${lit(body)}), signal: s.ac.signal });
+      (async () => { try { const res = await fetch(${lit(url)}, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify(${lit(body)}), signal: s.ac.signal });
         if (!res.ok) { s.err = 'HTTP ' + res.status + ' ' + (await res.text()).slice(0, 300); return }
         const rd = res.body.getReader(), dec = new TextDecoder();
         for (;;) { const { done, value } = await rd.read(); if (done) break; s.buf += dec.decode(value, { stream: true }) }
@@ -123,7 +144,7 @@ export class WorkClient {
     const abort = (): void => void this.page.evaluate(`(() => { const s = window.__work && window.__work[${lit(sid)}]; if (s) s.ac.abort() })()`)
     signal?.addEventListener('abort', abort, { once: true })
     let rest = ''
-    let chatId = req.chatId ?? ''
+    let chatId = chatIdIn
     try {
       for (;;) {
         const r = (await this.page.evaluate(`(() => { const s = window.__work && window.__work[${lit(sid)}]; if (!s) return { chunk: '', done: true, err: 'lost' }; const o = { chunk: s.buf, done: s.done, err: s.err }; s.buf = ''; if (s.done) delete window.__work[${lit(sid)}]; return o })()`)) as { chunk: string; done: boolean; err: string | null } | undefined

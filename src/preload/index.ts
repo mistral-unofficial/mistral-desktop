@@ -45,6 +45,7 @@ const api: Api = {
     get: (id) => inv('work:get', id),
     remove: (id) => inv('work:remove', id),
     send: (r) => inv('work:send', r),
+    answer: (r) => inv('work:answer', r),
     cancel: (id) => inv('work:cancel', id),
     onEvent: (cb) => sub<[string, WorkEvent]>('work:event', cb)
   },

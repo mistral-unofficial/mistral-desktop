@@ -1,4 +1,4 @@
-import type { AccountInfo, BrowserSignInResult, CodeConfigResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorkEvent, WorkGetResult, WorkListResult, WorkStatus, WorktreeCreateResult, WorktreeRemoveResult } from './types'
+import type { AccountInfo, BrowserSignInResult, CodeConfigResult, ChatEvent, CodeEvent, CodeResumeResult, CodeSessionInfo, CodeStartResult, CodeWorkspace, Conversation, ConversationHit, ExtensionPreview, ExtensionResult, InstalledExtension, McpServerStatus, Settings, SettingsView, WireMessage, UserConfigValue, WorkAnswer, WorkEvent, WorkGetResult, WorkListResult, WorkStatus, WorktreeCreateResult, WorktreeRemoveResult } from './types'
 
 /** The API exposed on `window.api` by the preload script. */
 export interface Api {
@@ -47,6 +47,8 @@ export interface Api {
     remove(id: string): Promise<string | undefined>
     /** Sends a message (a new chat without `chatId`); progress arrives through `onEvent` until `done`. */
     send(req: { requestId: string; chatId?: string; text: string }): Promise<void>
+    /** Answers the agent's pending question; the same assistant message then continues, reported through `onEvent`. */
+    answer(req: { requestId: string; chatId: string } & WorkAnswer): Promise<void>
     cancel(requestId: string): Promise<void>
     onEvent(cb: (requestId: string, e: WorkEvent) => void): () => void
   }

@@ -106,6 +106,43 @@ function fakePage(opts: { signedIn?: boolean; stream?: (string | ((calls: string
   return { page, calls }
 }
 
+const askChunk = (status: string, value?: string[]) => ({ type: 'task_callback', callbackId: 'cb1', callbackName: 'ask_user_question', input: { questions: [{ question: 'Which colour?', options: ['Red', 'Green'] }] }, result: value ? { status, value } : { status } })
+
+describe('agent questions', () => {
+  it('exposes a pending question and a submitted answer from the message chunks', () => {
+    const pending = toWorkMessage(raw('a', 'assistant', 'u', { contentChunks: [askChunk('pending')] }))
+    expect(pending.callbacks).toEqual([{ id: 'cb1', name: 'ask_user_question', status: 'pending', questions: [{ question: 'Which colour?', options: ['Red', 'Green'] }] }])
+    expect(pending.text).toBe('')
+    const done = toWorkMessage(raw('a', 'assistant', 'u', { contentChunks: [askChunk('submitted', ['Red']), { type: 'text', text: 'Got it' }] }))
+    expect(done.callbacks?.[0]).toMatchObject({ status: 'submitted', answers: ['Red'] })
+    expect(done.text).toBe('Got it')
+  })
+  it('keeps unknown callbacks as pending without questions', () => {
+    const m = toWorkMessage(raw('a', 'assistant', 'u', { contentChunks: [{ type: 'task_callback', callbackId: 'x', callbackName: 'enable_connector', input: {}, result: { status: 'pending' } }] }))
+    expect(m.callbacks).toEqual([{ id: 'x', name: 'enable_connector', status: 'pending', questions: [] }])
+  })
+  it('only advertises the callbacks it can show', async () => {
+    const { page, calls } = fakePage({ stream: [frame(8, null)] })
+    await new WorkClient(page).send({ text: 'hi' }, () => undefined)
+    expect(calls.find((c) => c.includes("return 'started'"))).toContain('"supportedTaskCallbacks":["ask_user_question"]')
+  })
+  it('resumes the same assistant message with the answer', async () => {
+    const msgs = [raw('u', 'user', null, { content: 'hi' }), raw('a', 'assistant', 'u', { contentChunks: [askChunk('pending')] })]
+    const resumed = raw('a', 'assistant', 'u', { contentChunks: [askChunk('submitted', ['Red']), { type: 'text', text: 'Red it is' }] })
+    const { page, calls } = fakePage({ messages: msgs, stream: [ev({ type: 'message', messageId: 'a', patches: [{ op: 'replace', path: '/', value: resumed }] }) + frame(8, null)] })
+    const final = await new WorkClient(page).answer({ chatId: 'c1', messageId: 'a', callbackId: 'cb1', values: ['Red'] }, () => undefined)
+    const start = calls.find((c) => c.includes("return 'started'"))!
+    expect(start).toContain('"/api/chat/resume"')
+    expect(start).toContain('"callbackResults":[{"callbackId":"cb1","callbackName":"ask_user_question","result":["Red"]}]')
+    expect(start).toContain('"messageId":"a"')
+    expect(final?.messages.at(-1)).toMatchObject({ text: 'Red it is', callbacks: [{ status: 'submitted', answers: ['Red'] }] })
+    expect(final?.messages).toHaveLength(2)
+  })
+  it('rejects an empty answer', async () => {
+    await expect(new WorkClient(fakePage().page).answer({ chatId: 'c1', messageId: 'a', callbackId: 'cb1', values: [' '] }, () => undefined)).rejects.toThrow('Empty answer')
+  })
+})
+
 describe('WorkClient', () => {
   it('lists chats with their titles', async () => {
     const { page } = fakePage()

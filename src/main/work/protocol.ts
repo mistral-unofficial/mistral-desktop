@@ -1,4 +1,4 @@
-import type { WorkChat, WorkChatSummary, WorkMessage } from '../../shared/types'
+import type { WorkCallback, WorkChat, WorkChatSummary, WorkMessage, WorkQuestion } from '../../shared/types'
 
 /**
  * Pure helpers for the internal chat.mistral.ai Work API: the line framing of POST /api/chat, the JSON-patch
@@ -75,7 +75,7 @@ export interface RawMessage {
   id: string
   role: string
   content?: string | null
-  contentChunks?: { type?: string; text?: string; _context?: { type?: string } }[] | null
+  contentChunks?: { type?: string; text?: string; _context?: { type?: string }; callbackId?: string; callbackName?: string; input?: unknown; result?: { status?: string; value?: unknown } }[] | null
   generationStatus?: string
   parentId?: string | null
   status?: string
@@ -86,14 +86,31 @@ export interface RawMessage {
 export function toWorkMessage(m: RawMessage): WorkMessage {
   let text = ''
   let reasoning = ''
+  const callbacks: WorkCallback[] = []
   if (Array.isArray(m.contentChunks) && m.contentChunks.length) {
     for (const c of m.contentChunks) {
+      if (c?.type === 'task_callback' && typeof c.callbackId === 'string') {
+        callbacks.push(toCallback(c))
+        continue
+      }
       if (c?.type !== 'text' || typeof c.text !== 'string') continue
       if (c._context?.type === 'reasoning') reasoning += c.text
       else text += c.text
     }
   } else text = m.content ?? ''
-  return { id: m.id, role: m.role === 'user' ? 'user' : 'assistant', text, reasoning, status: m.generationStatus ?? 'success' }
+  return { id: m.id, role: m.role === 'user' ? 'user' : 'assistant', text, reasoning, status: m.generationStatus ?? 'success', ...(callbacks.length ? { callbacks } : {}) }
+}
+
+type RawChunk = NonNullable<RawMessage['contentChunks']>[number]
+function toCallback(c: RawChunk): WorkCallback {
+  const name = c.callbackName ?? ''
+  const raw = (c.input as { questions?: { question?: unknown; options?: unknown }[] } | undefined)?.questions
+  const questions: WorkQuestion[] =
+    name === 'ask_user_question' && Array.isArray(raw)
+      ? raw.filter((q) => typeof q?.question === 'string').map((q) => ({ question: String(q.question), options: Array.isArray(q.options) ? q.options.filter((o): o is string => typeof o === 'string') : [] }))
+      : []
+  const v = c.result?.value
+  return { id: c.callbackId ?? '', name, status: c.result?.status ?? 'pending', questions, ...(Array.isArray(v) ? { answers: v.map(String) } : {}) }
 }
 
 /**

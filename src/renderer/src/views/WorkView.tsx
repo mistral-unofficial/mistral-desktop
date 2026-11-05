@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { WorkChat, WorkChatSummary, WorkEvent, WorkMessage } from '@shared/types'
+import type { WorkCallback, WorkChat, WorkChatSummary, WorkEvent, WorkMessage } from '@shared/types'
 import { Collapsible, Markdown, PlainText } from '../components'
 import type { SettingsSection } from '../settingsSections'
 import { SidebarPortal } from '../sidebar'
@@ -94,6 +94,19 @@ export function WorkView({ active }: { active: boolean; goSettings: (section?: S
     void window.api.work.send({ requestId: rid, chatId: chat?.id || undefined, text })
   }
 
+  // The agent can pause its turn to ask something; the answer continues the same assistant message.
+  const lastMsg = chat?.messages.at(-1)
+  const pending = !streaming && lastMsg?.role === 'assistant' ? lastMsg.callbacks?.find((c) => c.status === 'pending') : undefined
+  const pendingQuestion = pending?.name === 'ask_user_question' && pending.questions.length ? pending : undefined
+  const answer = (values: string[]): void => {
+    if (!chat?.id || !lastMsg || !pendingQuestion || streaming) return
+    const rid = crypto.randomUUID()
+    setError('')
+    reqRef.current = rid
+    setRequestId(rid)
+    void window.api.work.answer({ requestId: rid, chatId: chat.id, messageId: lastMsg.id, callbackId: pendingQuestion.id, values })
+  }
+
   return (
     <div className="split">
       <SidebarPortal tab="work">
@@ -135,19 +148,26 @@ export function WorkView({ active }: { active: boolean; goSettings: (section?: S
           {streaming && <div className="muted thinking">…</div>}
           <div ref={bottom} />
         </div>
-        <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
-          <textarea
-            value={input}
-            disabled={signedIn === false}
-            placeholder="Message Work…  (Enter to send, Shift+Enter for a new line)"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
-            rows={2}
-          />
-          {streaming
-            ? <button type="button" className="danger" onClick={() => void window.api.work.cancel(reqRef.current!)}>Stop</button>
-            : <button type="submit" className="primary" disabled={!input.trim() || signedIn === false}>Send</button>}
-        </form>
+        {pending && !pendingQuestion && (
+          <div className="banner">The agent is waiting for input this app cannot show ({pending.name || 'unknown'}). Continue this chat at chat.mistral.ai/work.</div>
+        )}
+        {pendingQuestion ? (
+          <WorkQuestions key={pendingQuestion.id} cb={pendingQuestion} onSubmit={answer} />
+        ) : (
+          <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
+            <textarea
+              value={input}
+              disabled={signedIn === false}
+              placeholder="Message Work…  (Enter to send, Shift+Enter for a new line)"
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
+              rows={2}
+            />
+            {streaming
+              ? <button type="button" className="danger" onClick={() => void window.api.work.cancel(reqRef.current!)}>Stop</button>
+              : <button type="submit" className="primary" disabled={!input.trim() || signedIn === false}>Send</button>}
+          </form>
+        )}
       </div>
     </div>
   )
@@ -158,8 +178,47 @@ function WorkItem({ m }: { m: WorkMessage }) {
   return (
     <div className="msg assistant">
       {m.reasoning && <Collapsible summary="Reasoning"><div className="muted"><PlainText text={m.reasoning} /></div></Collapsible>}
+      {m.callbacks?.filter((c) => c.status !== 'pending' && c.answers?.length).map((c) => (
+        <div key={c.id} className="muted workqa">
+          {c.questions.map((q, i) => <div key={i}>{q.question} <strong>{c.answers?.[i]}</strong></div>)}
+        </div>
+      ))}
       {m.text ? <Markdown text={m.text} /> : m.status === 'in-progress' ? <span className="muted">…</span> : null}
       {m.status === 'error' && <div className="warnline">The answer failed.</div>}
+    </div>
+  )
+}
+
+/** The agent's question, shown in place of the composer. Options are suggestions; any text is a valid answer. */
+function WorkQuestions({ cb, onSubmit }: { cb: WorkCallback; onSubmit: (values: string[]) => void }) {
+  const [values, setValues] = useState<string[]>(() => cb.questions.map(() => ''))
+  const single = cb.questions.length === 1
+  const set = (i: number, v: string): void => setValues((a) => a.map((x, j) => (j === i ? v : x)))
+  const ready = values.every((v) => v.trim())
+  return (
+    <div className="workq" role="group" aria-label="The agent has a question">
+      {cb.questions.map((q, i) => (
+        <div key={i} className="workq-item">
+          <div className="workq-text">{q.question}</div>
+          <div className="workq-options">
+            {q.options.map((o, n) => (
+              <button key={o} type="button" className={values[i] === o ? 'workq-opt selected' : 'workq-opt'} onClick={() => (single ? onSubmit([o]) : set(i, o))}>
+                <span className="workq-n">{n + 1}</span>{o}
+              </button>
+            ))}
+            <input
+              className="workq-free"
+              value={q.options.includes(values[i] ?? '') ? '' : values[i]}
+              placeholder="Or type your own answer…"
+              onChange={(e) => set(i, e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && (single ? values[i]?.trim() : ready)) { e.preventDefault(); onSubmit(values) } }}
+            />
+          </div>
+        </div>
+      ))}
+      <div className="workq-foot">
+        <button type="button" className="primary" disabled={!ready} onClick={() => onSubmit(values)}>{single ? 'Answer' : 'Submit answers'}</button>
+      </div>
     </div>
   )
 }
