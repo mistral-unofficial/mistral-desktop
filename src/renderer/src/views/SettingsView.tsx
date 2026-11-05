@@ -79,10 +79,10 @@ export function SettingsView({ section, onSection }: { section: SettingsSection;
       <section>
         <h3>Le Chat</h3>
         <p className="muted">Your Le Chat web account. Shows your name, organisation and budget in the sidebar. It does not give the app access to the Mistral API; that is what Vibe Code below is for.</p>
+        {account.webSignedIn && <p className="okline" role="status">✓ Signed in{account.profile?.name ? ` as ${account.profile.name}` : ''}{account.profile?.organization ? ` · ${account.profile.organization}` : ''}</p>}
         <div className="row">
           {account.webSignedIn ? (
             <>
-              <span className="okline">✓ Signed in{account.profile?.name ? ` as ${account.profile.name}` : ''}{account.profile?.organization ? ` · ${account.profile.organization}` : ''}</span>
               <button onClick={async () => setAccount(await window.api.account.webSignOut())}>Sign out: Le Chat</button>
             </>
           ) : (
@@ -96,12 +96,15 @@ export function SettingsView({ section, onSection }: { section: SettingsSection;
 
       <section>
         <h3>Vibe Code</h3>
-        <p className="muted">Creates a Mistral API key for your workspace. The Code tab (Vibe) and the Chat tab both use it. Or paste a key you made at console.mistral.ai. {s.hasApiKey ? '✓ A key is set.' : 'No key set.'}</p>
+        <p className="muted">Creates a Mistral API key for your workspace. The Code tab (Vibe) and the Chat tab both use it. Or paste a key you made at console.mistral.ai.</p>
+        {s.hasApiKey ? <p className="okline" role="status">✓ A key is set.</p> : <p className="muted">No key set.</p>}
         {s.insecureKeyStorage && <p className="warnline">No OS keychain available: the key is stored in a file readable only by your user.</p>}
         <div className="row">
-          <button className="primary" disabled={signingIn} onClick={() => void signIn()}>{signingIn ? 'Waiting for the sign-in window…' : 'Sign in: Vibe Code'}</button>
-          {s.hasApiKey && <button title="Removes the API key kept by this app. Le Chat stays signed in, and so does Vibe's own stored sign-in." onClick={async () => { setSignInOk(false); setS(await window.api.settings.signOut()) }}>Sign out: Vibe Code</button>}
-          <span className="muted">Needs Vibe installed.</span>
+          {s.hasApiKey ? (
+            <button title="Removes the API key kept by this app. Le Chat stays signed in, and so does Vibe's own stored sign-in." onClick={async () => { setSignInOk(false); setS(await window.api.settings.signOut()) }}>Sign out: Vibe Code</button>
+          ) : (
+            <button className="primary" disabled={signingIn} onClick={() => void signIn()}>{signingIn ? 'Waiting for the sign-in window…' : 'Sign in: Vibe Code'}</button>
+          )}
         </div>
         {signInError && <p className="warnline">{signInError}</p>}
         {signInOk && !signingIn && <p className="okline" role="status">✓ Signed in. The Code and Chat tabs now use your key.</p>}

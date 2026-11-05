@@ -223,3 +223,17 @@ select.warn { border-color: var(--warn); color: var(--warn); }
 .install-body h4 { margin: 10px 0 0; }
 .install-foot { padding: 12px 20px; border-top: 1px solid var(--border); }
 .install-foot .row { margin-top: 0; justify-content: flex-end; }
+
+/* Chat: connectors button + popover */
+.connectors { position: relative; margin-left: auto; }
+.connectors-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.connectors-btn:hover, .connectors-btn[aria-expanded='true'] { color: var(--accent); border-color: var(--accent); }
+.connectors-count { font-size: 12px; font-variant-numeric: tabular-nums; }
+.connectors-pop { position: absolute; top: calc(100% + 6px); right: 0; min-width: 240px; max-width: 360px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px rgba(0, 0, 0, .25); padding: 6px; z-index: 50; }
+.connectors-empty { padding: 8px 10px; }
+.connectors-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.connectors-row:hover { background: var(--hover, rgba(127, 127, 127, .12)); }
+.connectors-caret { width: 10px; font-size: 11px; }
+.connectors-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connectors-tools { list-style: none; margin: 2px 0 6px 28px; padding: 0 6px 0 0; max-height: 220px; overflow-y: auto; font-size: 12.5px; }
+.connectors-tools li { padding: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

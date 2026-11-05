@@ -18,6 +18,8 @@ export interface McpServerConfig {
   oauth?: boolean
   /** Set on servers that come from an installed .mcpb extension; those are not stored in settings. */
   extensionId?: string
+  /** Bumped when the extension is reinstalled/updated, so a running server restarts. */
+  revision?: number
 }
 
 export interface Settings {

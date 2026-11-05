@@ -149,10 +149,10 @@ export function ChatView({ goSettings, active }: { goSettings: (section?: Settin
               {[...new Set([conv.model, ...models])].filter(Boolean).map((m) => <option key={m}>{m}</option>)}
             </select>
           </label>
-          <span className="muted">{toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'} from ${connected.length} MCP server${connected.length === 1 ? '' : 's'}` : 'No MCP tools'}</span>
           <label className="check" title="Run tool calls without asking. Only enable for servers you trust.">
             <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} /> Auto-approve tools
           </label>
+          <ConnectorsButton servers={connected} toolCount={toolCount} />
         </header>
         {needAuth.length > 0 && (
           <div className="banner">{needAuth.map((m) => m.name).join(', ')} {needAuth.length === 1 ? 'needs' : 'need'} you to sign in. <button className="linklike" onClick={() => goSettings('connectors')}>Open Settings</button></div>
@@ -207,6 +207,58 @@ function ToolCard({ item }: { item: Extract<DisplayItem, { kind: 'tool' }> }) {
         </div>
       )}
       {item.result !== undefined && <Collapsible summary="Result"><pre className="toolargs">{item.result}</pre></Collapsible>}
+    </div>
+  )
+}
+
+function ConnectorsButton({ servers, toolCount }: { servers: McpServerStatus[]; toolCount: number }) {
+  const [open, setOpen] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  const label = `Connectors: ${servers.length} connected, ${toolCount} tool${toolCount === 1 ? '' : 's'}`
+  return (
+    <div className="connectors" ref={ref}>
+      <button className="connectors-btn" aria-label={label} title={label} aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0V7zM12 17v5" />
+        </svg>
+        <span className="connectors-count">{servers.length}</span>
+      </button>
+      {open && (
+        <div className="connectors-pop" role="menu">
+          {!servers.length && <div className="muted connectors-empty">No connected MCP servers.</div>}
+          {servers.map((m) => (
+            <div key={m.id} className="connectors-item">
+              <button className="connectors-row" aria-expanded={expanded === m.id} onClick={() => setExpanded(expanded === m.id ? null : m.id)}>
+                <span className="connectors-caret">{expanded === m.id ? '▾' : '▸'}</span>
+                <span className="connectors-name">{m.name}</span>
+                <span className="muted">{m.tools.length}</span>
+              </button>
+              {expanded === m.id && (
+                <ul className="connectors-tools">
+                  {m.tools.map((t) => <li key={t} title={t}>{t}</li>)}
+                  {!m.tools.length && <li className="muted">No tools</li>}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

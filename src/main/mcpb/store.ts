@@ -8,7 +8,7 @@ import { BundleError, cleanStaging, iconDataUrl, idFromName, installFiles, norma
 
 interface StoredState {
   version: 1
-  items: Record<string, { enabled: boolean; values: Record<string, UserConfigValue>; installedAt: number; signed?: boolean }>
+  items: Record<string, { enabled: boolean; values: Record<string, UserConfigValue>; installedAt: number; signed?: boolean; revision?: number }>
 }
 
 export interface StoreEnv {
@@ -152,6 +152,10 @@ export class ExtensionStore {
       return { ok: false, error: e instanceof BundleError ? e.message : `Install failed: ${(e as Error).message}` }
     }
     await this.persistValues(id, m, values, prevSecrets, prev?.enabled ?? true, prev?.installedAt, parsed.signed)
+    // Bump on every (re)install so a running server is restarted even when its command/args/env are unchanged.
+    const after = this.load()
+    after.items[id]!.revision = Date.now()
+    this.save(after)
     this.staged.delete(stagingId)
     this.onChange?.()
     return { ok: true, extension: (await this.describe(id))! }
@@ -170,7 +174,7 @@ export class ExtensionStore {
     if (Object.keys(secret).length) await this.vault.set(`ext:${id}`, secret)
     else await this.vault.delete(`ext:${id}`)
     const state = this.load()
-    state.items[id] = { enabled, values: plain, installedAt: installedAt ?? Date.now(), signed: signed ?? state.items[id]?.signed }
+    state.items[id] = { enabled, values: plain, installedAt: installedAt ?? Date.now(), signed: signed ?? state.items[id]?.signed, revision: state.items[id]?.revision }
     this.save(state)
   }
 
@@ -281,7 +285,7 @@ export class ExtensionStore {
         command = this.env.execPath
         env.ELECTRON_RUN_AS_NODE = '1'
       } else if (command === 'python' && !has('python') && has('python3')) command = 'python3'
-      out.push({ id: `ext:${id}`, name: m.name, enabled: st.enabled, command, args: cfg.args ?? [], env, cwd: dir, extensionId: id })
+      out.push({ id: `ext:${id}`, name: m.name, enabled: st.enabled, command, args: cfg.args ?? [], env, cwd: dir, extensionId: id, revision: st.revision })
     }
     return out
   }
