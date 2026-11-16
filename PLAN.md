@@ -1,6 +1,6 @@
 # Mistral Desktop — Plan
 
-A desktop app that behaves like Claude Desktop but runs on Mistral: a **Chat** tab, a **Code** tab bound to a local folder, and local **MCP** servers (including `.mcpb` bundles).
+A desktop app that runs on Mistral: a **Chat** tab, a **Code** tab bound to a local folder, and local **MCP** servers (including `.mcpb` bundles).
 
 ## Decisions
 - **Shell:** Electron + TypeScript + React.
@@ -99,7 +99,6 @@ Status: 0-5 implemented and tested against mocks (MCPB install, remote MCP incl.
 ## Risks
 - Subscription auth may not be available to third-party apps (biggest risk; see Findings, Auth).
 - Vibe is young and ACP coverage or flags may change between versions; pin and test a supported version range.
-- Mistral's tool-calling quality differs from Claude's; keep the tool loop simple and surface errors clearly.
 
 ## References
 - Vibe CLI: https://github.com/mistralai/mistral-vibe

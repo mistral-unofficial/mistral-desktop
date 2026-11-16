@@ -1,60 +1,130 @@
 # Mistral Desktop
 
-A desktop app in the spirit of Claude Desktop, built on Mistral: a **Chat** tab, a **Code** tab that runs [Mistral Vibe](https://github.com/mistralai/mistral-vibe) inside a folder you choose, and local **MCP** servers. Electron + React + TypeScript.
+<p align="center">
+  <img src="img/screen1.png" alt="Mistral Desktop application screenshot showing Chat, Code, and Work tabs with a conversation interface" width="800">
+</p>
 
-> Status: early. See [PLAN.md](PLAN.md) for the design, findings and roadmap, and "Known gaps" below.
+**Mistral Desktop** is a free, open-source desktop application for macOS, Windows, and Linux. It brings the power of Mistral's AI to your local machine with a clean, native experience.
 
-## Run it
+## What It Does
+
+Mistral Desktop combines three powerful capabilities in one app:
+
+| Feature | What it does |
+|---------|--------------|
+| **Chat** | Conversational AI with Mistral's latest models. Supports Markdown, code blocks, tables, and tool usage. |
+| **Code** | Full-featured coding assistant powered by **Mistral Vibe** — run it in any project folder on your machine. |
+| **MCP Servers** | Connect to Model Context Protocol servers — add tools, APIs, and custom integrations to supercharge both Chat and Code. |
+
+Think of it as having a local AI coding partner that can also help you with any text-based task.
+
+---
+
+## Quick Start
+
+### 1. Install
 
 ```bash
+# Clone and set up
+git clone https://github.com/wolfposd/mistral-desktop.git
+cd mistral-desktop
 npm install
-npm run dev          # development
-npm run build && npm start
 ```
 
-- **Chat** needs a Mistral API key (Settings → Mistral API key, or `MISTRAL_API_KEY` in the environment).
-- **Code** needs Vibe: `uv tool install mistral-vibe`. The app looks for `vibe-acp` on `PATH` and in `~/.local/bin`, or use the path in Settings. The key from Settings is passed to Vibe; if Vibe offers browser sign-in the Code tab shows a button for it.
-- **Settings** (cog, bottom left) is a window with a side panel: **Account** (Le Chat sign-in, Mistral/Vibe Code sign-in and API key, and the `vibe-acp` setup), **Connectors** (extensions and MCP servers) and **General** (profile, chat defaults).
-- **MCP servers** (Settings → Connectors) come in three kinds. All are available to Chat as tools (each call needs your approval unless you tick "Auto-approve tools") and are handed to Vibe in the Code tab.
-  - **Extensions (`.mcpb`)**: click *Install extension…* (or drop a file). You see what it will run, fill in its settings (secrets go to the OS keychain), and it starts automatically. Settings can be changed later, extensions can be disabled or uninstalled. Updating a bundle keeps your settings.
-  - **Local servers**: any stdio command, added by hand or by pasting a `{ "mcpServers": … }` block (e.g. from `claude_desktop_config.json`; entries with a `url` become remote servers).
-  - **Remote servers**: a URL (streamable HTTP, with automatic fallback to legacy SSE), optional headers, and OAuth sign-in (*Sign in* opens your browser; tokens are kept in the keychain).
-- **Chat** renders Markdown (tables, lists, code blocks with a copy button). Raw HTML is shown as text, links open in your browser, images are not loaded.
-- **Code → History** lists earlier Vibe sessions for the current folder; pick one to continue it where you left off.
-- **Code → `@` file mentions**: type `@` in the prompt box to complete files and folders of the project, fuzzy-matched and ranked like the Vibe CLI (`@app` finds `src/app.ts`, `@btn` finds `Button.tsx`). Arrow keys move, Enter or Tab inserts, Esc closes. The list comes from git (tracked and untracked, not ignored) or a folder walk, so `.gitignore`d files do not show up. Vibe itself attaches the mentioned files; the app only completes the text in the syntax Vibe reads (names with spaces or characters like `+` are inserted quoted).
-
-## How it fits together
-
-```
-renderer (React)  ──IPC (contextIsolation, typed in src/shared/api.ts)──  main (Electron)
- Chat / Code / Settings                                                     settings.ts      API key via OS keychain (safeStorage)
-                                                                            chat/mistral.ts  streaming chat completions (SSE)
-                                                                            chat/run.ts      tool loop with per-call approval
-                                                                            mcp/host.ts      MCP client: stdio, streamable HTTP, SSE; OAuth via mcp/oauth.ts
-                                                                            mcpb/            .mcpb parsing/validation (bundle.ts), install + settings (store.ts)
-                                                                            vault.ts         encrypted store for extension secrets and OAuth tokens
-                                                                            code/acp-client  Agent Client Protocol over `vibe-acp`
-                                                                            code/service.ts  sessions, permissions, auth, recent folders
-```
-
-## Tests
+### 2. Run in Development
 
 ```bash
-npm run check        # typecheck + unit tests (vitest)
-VIBE_ACP=$(command -v vibe-acp) xvfb-run -a npm run e2e:mentions   # `@` completion in the real app, with real vibe-acp
-VIBE_ACP=$(command -v vibe-acp) xvfb-run -a npm run e2e            # full tour: chat, MCP, extensions, Code
+npm run dev
 ```
 
-The e2e test uses local mock servers instead of Mistral (`e2e/mock-mistral.mjs` for Chat, `e2e/mock-vibe-llm.mjs` for Vibe), so it needs no account or network. `spikes/acp/` holds the earlier protocol experiments.
+### 3. Get an API Key
 
-## Known gaps
+- Open **Settings** (⚙️ bottom-left)
+- Go to **Account** → **Mistral API Key**
+- Paste your Mistral API key (get one at [console.mistral.ai](https://console.mistral.ai))
 
-- **Never run against the real Mistral API or a real Mistral account**: everything is verified against mocks, plus the real `vibe-acp` binary talking to a mock model. Real-model behaviour, the Vibe browser sign-in flow, and model-list filtering are untested.
-- **MCPB**: bundle signatures are detected but **not verified** (the install dialog says so). Python and `uv` bundles need Python/uv on the machine; Node bundles use your `node`, or this app's built-in Node if you have none. Not supported: bundle localization, `prompts`, auto-update, installing by double-clicking a file. Tested with synthetic bundles, not a library of real third-party ones.
-- **Remote MCP**: custom header values (e.g. a static `Authorization` token) are stored **unencrypted** in `settings.json`; prefer OAuth. OAuth is tested against a mock server (discovery, dynamic registration, PKCE, refresh), not a real provider. In the Code tab, OAuth servers are passed to Vibe with the *current* access token, so they stop working when it expires until the app refreshes it (restart the session).
-- In Vibe, MCP tools reach the model through its code-mode (`search_tool_functions` + `run_typescript`), not as direct tools. How well that works with Mistral models is untested.
-- **Session resume** replays the stored conversation but shows it as a flat history (no scroll-to-position); sessions are listed per folder and per Vibe home. Vibe must support `session/list` and `session/load` (3.0.4 does); otherwise the History button is hidden.
-- Code tab: no terminal pane. The permission prompt UI is covered by unit tests, not by the e2e run.
-- Markdown has no syntax highlighting.
-- No packaging/auto-update/code signing yet. The Code agent's cwd is not a sandbox; use Vibe's `ask` mode to review actions.
-- Electron's `safeStorage` on Linux without a keyring is detected and the app falls back to a 0600 file, saying so in Settings.
+*Alternatively:* Use the **Sign in with Mistral** button — the app can use Mistral Vibe's browser sign-in flow to get a key automatically.
+
+### 4. Start Chatting
+
+- Open the **Chat** tab
+- Select a model from the dropdown
+- Type your message and press Enter
+
+### 5. Try Coding
+
+- Open the **Code** tab
+- Click **Open Folder** and select your project
+- The app will start Mistral Vibe inside that folder
+- Type `@` to autocomplete file names (e.g., `@src` finds `src/index.ts`)
+
+---
+
+## Features
+
+### Chat Tab
+- ✅ Streaming responses — see answers appear word-by-word
+- ✅ Full Markdown support: code blocks with copy buttons, tables, lists
+- ✅ Conversation history — pick up where you left off
+- ✅ Model selection — choose from available Mistral models
+- ✅ MCP tool integration — extend with custom capabilities
+
+### Code Tab
+- ✅ **Mistral Vibe Integration** — runs the official Vibe CLI (`vibe-acp`) as a subprocess
+- ✅ Project folder selection — work in any directory on your machine
+- ✅ Support for git worktrees - multiple agents same repository
+- ✅ **@-mentions** — type `@` to autocomplete and attach files to your prompt
+- ✅ File diffs — see changes before they're applied
+- ✅ Permission prompts — approve or deny file edits and shell commands
+- ✅ Session history — resume previous coding sessions
+- ✅ MCP passthrough — your MCP servers are available to Vibe
+
+### MCP Servers (Model Context Protocol)
+Add capabilities to both Chat and Code:
+
+- **Extensions (.mcpb)** — One-click install of pre-built MCP bundles. Secrets are stored securely in your OS keychain.
+- **Local Servers** — Connect to any stdio-based MCP server on your machine.
+- **Remote Servers** — Connect to HTTP/SSE MCP servers. Supports OAuth for secure authentication.
+
+All MCP tools are available in Chat (with per-call approval) and passed through to Vibe in the Code tab.
+
+---
+
+## Settings
+
+Click the **⚙️ Settings** button (bottom-left) to configure:
+
+- **Account** — Mistral API key, Le Chat sign-in, Vibe configuration, `vibe-acp` path
+- **Connectors** — Manage MCP extensions and servers
+- **General** — App preferences, chat defaults, profile
+
+---
+
+## Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| **Chat** | Mistral API key (or browser sign-in) |
+| **Code** | [Mistral Vibe](https://github.com/mistralai/mistral-vibe) installed (`uv tool install mistral-vibe` or `brew install mistral-vibe`) |
+| **MCP Extensions** | Python/uv or Node.js depending on the bundle |
+
+---
+
+## Learn More
+
+- [Technical Details](docs/TECHNICAL.md) — Architecture, testing, known limitations, and implementation notes
+- [PLAN.md](PLAN.md) — Design decisions, roadmap, and milestones
+- [Mistral Vibe](https://github.com/mistralai/mistral-vibe) — The official Mistral coding agent
+- [MCP Documentation](https://modelcontextprotocol.io) — Model Context Protocol specification
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Built with Electron, React, TypeScript, and Mistral AI
+</p>
