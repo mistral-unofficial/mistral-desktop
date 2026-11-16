@@ -86,6 +86,36 @@ describe('CodeService with a fake ACP agent', () => {
     svc.stopAll()
   })
 
+  it('shows the agent a question form and returns the answers', async () => {
+    const { svc, events, waitFor } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    svc.prompt(r.id, 'question')
+    const q = (await waitFor((e) => e.type === 'question')) as Extract<CodeEvent, { type: 'question' }>
+    expect(events.some((e) => text(e).includes('elicit-form=true'))).toBe(true) // the capability is advertised
+    expect(q.footer).toBe('Pick wisely')
+    expect(q.questions).toEqual([
+      { key: 'q0', header: 'Colour', question: 'Which colour?', options: ['Red', 'Green'], multi: false },
+      { key: 'q1', header: 'Extras', question: 'Which extras?', options: ['A', 'B'], multi: true }
+    ])
+    svc.respondQuestion(r.id, q.requestId, { q0: 'Red', q1: ['A', 'mine'] })
+    await waitFor((e) => e.type === 'turn-end')
+    expect(events.some((e) => text(e).includes('answer=') && text(e).includes('accept') && text(e).includes('Red'))).toBe(true)
+    svc.stopAll()
+  })
+
+  it('answers a dismissed question as cancelled', async () => {
+    const { svc, events, waitFor } = service('normal')
+    const r = await svc.start(tmp())
+    if (r.status !== 'ready') throw new Error('not ready')
+    svc.prompt(r.id, 'question')
+    const q = (await waitFor((e) => e.type === 'question')) as Extract<CodeEvent, { type: 'question' }>
+    svc.respondQuestion(r.id, q.requestId, null)
+    await waitFor((e) => e.type === 'turn-end')
+    expect(events.some((e) => text(e).includes('cancel'))).toBe(true)
+    svc.stopAll()
+  })
+
   it('rejects a second prompt while a turn is running', async () => {
     const { svc, events, waitFor } = service('normal')
     const r = await svc.start(tmp())
@@ -302,5 +332,15 @@ describe('@ file completion', () => {
     await waitFor((e) => e.type === 'turn-end')
     expect(events.some((e) => text(e).includes('echo: explain @src/a.ts'))).toBe(true)
     svc.stopAll()
+  })
+})
+
+describe('parseElicitation', () => {
+  it('declines forms it cannot show', async () => {
+    const { parseElicitation } = await import('../src/main/code/acp-client')
+    expect(parseElicitation({ mode: 'url' })).toBeUndefined()
+    expect(parseElicitation({ mode: 'form', requestedSchema: { properties: { n: { type: 'number' } } } })).toBeUndefined()
+    expect(parseElicitation({ mode: 'form', requestedSchema: { properties: {} } })).toBeUndefined()
+    expect(parseElicitation({ mode: 'form', requestedSchema: { properties: { a: { type: 'string', description: 'Name?' } } } })?.questions).toEqual([{ key: 'a', header: undefined, question: 'Name?', options: [], multi: false }])
   })
 })

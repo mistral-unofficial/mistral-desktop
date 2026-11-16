@@ -5,6 +5,8 @@ const mode = process.env.FAKE_MODE || 'normal'
 const w = (o) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...o }) + '\n')
 let authed = mode !== 'needsauth'
 let permResolve
+let elicitForm = false
+let elicitResolve
 let current = 's1'
 const cfg = { model: 'fast-model', thinking: 'high' }
 const configOptions = () => [
@@ -18,6 +20,7 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
   const m = JSON.parse(l)
   if (m.method === 'initialize') {
     const caps = mode === 'noresume' ? {} : { loadSession: true, sessionCapabilities: { list: {}, close: {} } }
+    elicitForm = !!m.params?.clientCapabilities?.elicitation?.form
     const delegated = m.params?.clientCapabilities?._meta?.['browser-auth-delegated'] === true
     const methods = mode === 'needsauth' ? [{ id: 'browser-auth', name: 'Sign in' }] : (mode === 'signin' || mode === 'signinfail') ? [{ id: 'browser-auth', name: 'Sign in' }, ...(delegated ? [{ id: 'browser-auth-delegated', name: 'Sign in (delegated)' }] : [])] : []
     w({ id: m.id, result: { protocolVersion: 1, authMethods: methods, agentInfo: { name: 'fake', version: '1' }, agentCapabilities: caps } })
@@ -77,10 +80,19 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
         upd({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'outcome=' + JSON.stringify(outcome) } })
         w({ id: m.id, result: { stopReason: outcome.outcome === 'cancelled' ? 'cancelled' : 'end_turn' } })
       })
+    } else if (text === 'question') {
+      upd({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'elicit-form=' + elicitForm } })
+      w({ id: 901, method: 'elicitation/create', params: { mode: 'form', sessionId: 's1', toolCallId: 't2', message: 'User input required', requestedSchema: { type: 'object', description: 'Pick wisely', required: ['q0', 'q1'], properties: { q0: { type: 'string', title: 'Colour', description: 'Which colour?', oneOf: [{ const: 'Red', title: 'Red' }, { const: 'Green', title: 'Green' }] }, q1: { type: 'array', title: 'Extras', description: 'Which extras?', items: { anyOf: [{ const: 'A', title: 'A' }, { const: 'B', title: 'B' }] } } } } } })
+      new Promise((r) => (elicitResolve = r)).then((result) => {
+        upd({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'answer=' + JSON.stringify(result) } })
+        w({ id: m.id, result: { stopReason: 'end_turn' } })
+      })
     } else if (mode === 'slowturn') setTimeout(() => { n1done = true; w({ id: m.id, result: { stopReason: 'end_turn' } }) }, 4000)
     else w({ id: m.id, result: { stopReason: 'end_turn' } })
   } else if (m.method === 'session/cancel') {
     permResolve?.({ outcome: 'cancelled' })
+  } else if (m.id === 901 && m.result) {
+    elicitResolve?.(m.result)
   } else if (m.id === 900 && m.result) {
     permResolve?.(m.result.outcome)
   }

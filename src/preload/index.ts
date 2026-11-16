@@ -81,6 +81,7 @@ const api: Api = {
     cancel: (id) => inv('code:cancel', id),
     setMode: (id, m) => inv('code:setMode', id, m),
     respondPermission: (id, r, o) => inv('code:permission', id, r, o),
+    respondQuestion: (id, r, a) => inv('code:answer', id, r, a),
     stop: (id) => inv('code:stop', id),
     listSessions: (id) => inv('code:listSessions', id),
     resume: (id, sid) => inv('code:resume', id, sid),

@@ -220,10 +220,19 @@ export interface PermissionOption {
   kind: string
 }
 
+export interface CodeQuestion {
+  key: string
+  header?: string
+  question: string
+  options: string[]
+  multi: boolean
+}
+
 /** Subset of ACP session updates the UI cares about, passed through mostly as-is. */
 export type CodeEvent =
   | { type: 'update'; update: Record<string, unknown> & { sessionUpdate: string } }
   | { type: 'permission'; requestId: string; title: string; options: PermissionOption[]; toolCall: Record<string, unknown> }
+  | { type: 'question'; requestId: string; message?: string; footer?: string; questions: CodeQuestion[] }
   | { type: 'turn-end'; stopReason: string }
   | { type: 'error'; message: string }
   | { type: 'exit'; code: number | null }

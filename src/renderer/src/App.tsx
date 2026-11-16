@@ -8,6 +8,17 @@ import type { SettingsSection } from './settingsSections'
 import { AccountMenu } from './AccountMenu'
 import { SidebarSlots, type SidebarTab } from './sidebar'
 
+const TAB_ICONS: Record<SidebarTab, string> = {
+  work: 'M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9H7z',
+  chat: 'M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z',
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5'
+}
+const TabIcon = ({ tab }: { tab: SidebarTab }) => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={TAB_ICONS[tab]} />
+  </svg>
+)
+
 const OPEN_KEY = 'sidebar-open'
 const readOpen = (): boolean => {
   try {
@@ -81,6 +92,7 @@ export function App() {
           <div className="segtabs" role="tablist">
             {(['work', 'chat', 'code'] as SidebarTab[]).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'seg active' : 'seg'} onClick={() => pick(t)}>
+                <TabIcon tab={t} />
                 {t === 'chat' ? 'Chat' : t === 'work' ? 'Work' : 'Code'}
               </button>
             ))}

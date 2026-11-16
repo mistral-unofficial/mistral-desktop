@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { BrowserSignInResult, CodeConfigResult, CodeEvent, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
+import type { BrowserSignInResult, CodeConfigResult, CodeEvent, CodeQuestion, CodeWorkspace, WorktreeCreateResult, WorktreeRemoveResult, CodeMode, CodeResumeResult, CodeSessionInfo, CodeStartResult } from '../../shared/types'
 import type { SettingsStore } from '../settings'
 import { readVibeApiKey } from '../vibe-credentials'
 import { listProjectFiles, type ProjectFiles } from './files'
@@ -17,6 +17,7 @@ interface Session {
   acpSessionId?: string
   authMethods: AcpAuthMethod[]
   perms: Map<string, (optionId: string | null) => void>
+  asks: Map<string, (answers: Record<string, string | string[]> | null) => void>
   stderrTail: string
   busy: boolean
   canList: boolean
@@ -76,7 +77,7 @@ export class CodeService {
     const s = this.settings.get()
     const id = randomUUID()
     const client = new AcpClient()
-    const sess: Session = { client, cwd, authMethods: [], perms: new Map(), stderrTail: '', busy: false, canList: false, canLoad: false, canClose: false, replay: null }
+    const sess: Session = { client, cwd, authMethods: [], perms: new Map(), asks: new Map(), stderrTail: '', busy: false, canList: false, canLoad: false, canClose: false, replay: null }
     this.sessions.set(id, sess)
 
     client.on('update', (p: { update?: Record<string, unknown> & { sessionUpdate: string } }) => {
@@ -88,6 +89,11 @@ export class CodeService {
       const requestId = randomUUID()
       sess.perms.set(requestId, respond)
       this.emit(id, { type: 'permission', requestId, title: String(req.toolCall?.title ?? 'Permission requested'), options: req.options ?? [], toolCall: req.toolCall ?? {} })
+    })
+    client.on('elicitation', (req: { message?: string; footer?: string; questions: CodeQuestion[] }, respond: (a: Record<string, string | string[]> | null) => void) => {
+      const requestId = randomUUID()
+      sess.asks.set(requestId, respond)
+      this.emit(id, { type: 'question', requestId, message: req.message, footer: req.footer, questions: req.questions })
     })
     client.on('stderr', (t: string) => (sess.stderrTail = (sess.stderrTail + t).slice(-2000)))
     client.on('exit', (code: number | null) => this.emit(id, { type: 'exit', code }))
@@ -344,6 +350,8 @@ export class CodeService {
         sess.busy = false
         for (const respond of sess.perms.values()) respond(null) // a finished turn cannot still await permission
         sess.perms.clear()
+        for (const respond of sess.asks.values()) respond(null)
+        sess.asks.clear()
       })
   }
 
@@ -352,6 +360,8 @@ export class CodeService {
     if (!sess?.acpSessionId) return
     for (const respond of sess.perms.values()) respond(null)
     sess.perms.clear()
+    for (const respond of sess.asks.values()) respond(null)
+    sess.asks.clear()
     sess.client.cancel(sess.acpSessionId)
   }
 
@@ -379,6 +389,15 @@ export class CodeService {
     if (!respond) return
     sess?.perms.delete(requestId)
     respond(optionId)
+  }
+
+  /** Answers a question of the agent; `answers` null dismisses it. */
+  respondQuestion(id: string, requestId: string, answers: Record<string, string | string[]> | null): void {
+    const sess = this.sessions.get(id)
+    const respond = sess?.asks.get(requestId)
+    if (!respond) return
+    sess?.asks.delete(requestId)
+    respond(answers)
   }
 
   private drop(id: string): void {

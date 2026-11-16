@@ -30,7 +30,7 @@ code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
 .appsidebar { width: 260px; flex: none; display: flex; flex-direction: column; background: var(--bg2); border-right: 1px solid var(--border); }
 .appsidebar[hidden] { display: none; }
 .segtabs { display: flex; gap: 2px; margin: 10px; padding: 3px; background: var(--bg3); border-radius: 10px; }
-.seg { flex: 1; border: none; background: none; padding: 6px 10px; border-radius: 8px; color: var(--muted); }
+.seg { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; background: none; padding: 6px 10px; border-radius: 8px; color: var(--muted); }
 .seg:hover:not(.active) { color: var(--accent); }
 .seg.active, .seg.active:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); font-weight: 600; box-shadow: none; }
 .slot { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
@@ -248,3 +248,6 @@ select.warn { border-color: var(--warn); color: var(--warn); }
 .workq-free { padding: 8px 10px; }
 .workq-foot { display: flex; justify-content: flex-end; }
 .workqa { font-size: 13px; margin: 6px 0; }
+.workq-head { font-size: 12px; margin-bottom: 2px; }
+.workq-note { font-size: 12px; }
+.workq-foot { gap: 8px; }

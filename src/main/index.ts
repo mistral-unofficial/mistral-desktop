@@ -289,6 +289,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('code:listFiles', (_e, id: string) => code.listFiles(id).catch(() => ({ entries: [], truncated: false })))
   ipcMain.handle('code:cancel', (_e, id: string) => code.cancel(id))
   ipcMain.handle('code:setMode', (_e, id: string, m: string) => code.setMode(id, m))
+  ipcMain.handle('code:answer', (_e, id: string, r: string, a: Record<string, string | string[]> | null) => code.respondQuestion(id, r, a))
   ipcMain.handle('code:permission', (_e, id: string, r: string, o: string | null) => code.respondPermission(id, r, o))
   ipcMain.handle('code:stop', (_e, id: string) => code.stop(id))
   ipcMain.handle('code:listSessions', (_e, id: string) => code.listSessions(id).catch(() => []))

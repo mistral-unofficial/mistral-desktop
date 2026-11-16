@@ -89,6 +89,8 @@ export interface Api {
     cancel(id: string): Promise<void>
     setMode(id: string, modeId: string): Promise<void>
     respondPermission(id: string, requestId: string, optionId: string | null): Promise<void>
+    /** Answers the agent's question (field key → chosen label, or labels for multi-select); null dismisses it. */
+    respondQuestion(id: string, requestId: string, answers: Record<string, string | string[]> | null): Promise<void>
     stop(id: string): Promise<void>
     listSessions(id: string): Promise<CodeSessionInfo[]>
     /** Recently opened folders with their stored sessions. Starts a short-lived Vibe process to read them. */

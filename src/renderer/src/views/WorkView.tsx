@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { WorkCallback, WorkChat, WorkChatSummary, WorkEvent, WorkMessage } from '@shared/types'
-import { Collapsible, Markdown, PlainText } from '../components'
+import type { WorkChat, WorkChatSummary, WorkEvent, WorkMessage } from '@shared/types'
+import { Collapsible, Markdown, PlainText, QuestionCard } from '../components'
 import type { SettingsSection } from '../settingsSections'
 import { SidebarPortal } from '../sidebar'
 
@@ -152,7 +152,7 @@ export function WorkView({ active }: { active: boolean; goSettings: (section?: S
           <div className="banner">The agent is waiting for input this app cannot show ({pending.name || 'unknown'}). Continue this chat at chat.mistral.ai/work.</div>
         )}
         {pendingQuestion ? (
-          <WorkQuestions key={pendingQuestion.id} cb={pendingQuestion} onSubmit={answer} />
+          <QuestionCard key={pendingQuestion.id} questions={pendingQuestion.questions} onSubmit={(a) => answer(a.map((x) => x.join(', ')))} />
         ) : (
           <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
             <textarea
@@ -185,40 +185,6 @@ function WorkItem({ m }: { m: WorkMessage }) {
       ))}
       {m.text ? <Markdown text={m.text} /> : m.status === 'in-progress' ? <span className="muted">…</span> : null}
       {m.status === 'error' && <div className="warnline">The answer failed.</div>}
-    </div>
-  )
-}
-
-/** The agent's question, shown in place of the composer. Options are suggestions; any text is a valid answer. */
-function WorkQuestions({ cb, onSubmit }: { cb: WorkCallback; onSubmit: (values: string[]) => void }) {
-  const [values, setValues] = useState<string[]>(() => cb.questions.map(() => ''))
-  const single = cb.questions.length === 1
-  const set = (i: number, v: string): void => setValues((a) => a.map((x, j) => (j === i ? v : x)))
-  const ready = values.every((v) => v.trim())
-  return (
-    <div className="workq" role="group" aria-label="The agent has a question">
-      {cb.questions.map((q, i) => (
-        <div key={i} className="workq-item">
-          <div className="workq-text">{q.question}</div>
-          <div className="workq-options">
-            {q.options.map((o, n) => (
-              <button key={o} type="button" className={values[i] === o ? 'workq-opt selected' : 'workq-opt'} onClick={() => (single ? onSubmit([o]) : set(i, o))}>
-                <span className="workq-n">{n + 1}</span>{o}
-              </button>
-            ))}
-            <input
-              className="workq-free"
-              value={q.options.includes(values[i] ?? '') ? '' : values[i]}
-              placeholder="Or type your own answer…"
-              onChange={(e) => set(i, e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && (single ? values[i]?.trim() : ready)) { e.preventDefault(); onSubmit(values) } }}
-            />
-          </div>
-        </div>
-      ))}
-      <div className="workq-foot">
-        <button type="button" className="primary" disabled={!ready} onClick={() => onSubmit(values)}>{single ? 'Answer' : 'Submit answers'}</button>
-      </div>
     </div>
   )
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CodeConfigOption, CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption } from '@shared/types'
+import type { CodeConfigOption, CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption, CodeQuestion } from '@shared/types'
 import { normalizeConfigOptions } from '@shared/config-options'
 import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
-import { Collapsible, Diff, Markdown, PlainText } from '../components'
+import { Collapsible, Diff, Markdown, PlainText, QuestionCard } from '../components'
 import { MentionTextarea } from '../MentionTextarea'
 import { mergePending, type PendingSession } from '../sessions'
 import type { SettingsSection } from '../settingsSections'
@@ -10,6 +10,7 @@ import { SidebarPortal } from '../sidebar'
 import { WorkspaceList, folderName } from './WorkspaceList'
 
 type Status = 'idle' | 'starting' | 'ready' | 'needs-auth' | 'error' | 'exited'
+interface Ask { requestId: string; message?: string; footer?: string; questions: CodeQuestion[] }
 interface Perm { requestId: string; title: string; options: PermissionOption[] }
 
 export function CodeView({ goSettings, active }: { goSettings: (section?: SettingsSection) => void; active: boolean }) {
@@ -31,6 +32,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const [state, setState] = useState<CodeState>({ items: [] })
   const [busy, setBusy] = useState(false)
   const [perms, setPerms] = useState<Perm[]>([])
+  const [asks, setAsks] = useState<Ask[]>([])
   const [input, setInput] = useState('')
   const idRef = useRef<string | undefined>(undefined)
   const buffered = useRef(new Map<string, CodeEvent[]>())
@@ -44,9 +46,10 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
         if (e.update.sessionUpdate === 'current_mode_update' && typeof e.update.currentModeId === 'string') setMode(e.update.currentModeId)
         break
       case 'permission': setPerms((p) => [...p, { requestId: e.requestId, title: e.title, options: e.options }]); break
+      case 'question': setAsks((a) => [...a, { requestId: e.requestId, message: e.message, footer: e.footer, questions: e.questions }]); break
       case 'turn-end':
         setBusy(false)
-        setPerms([])
+        setPerms([]); setAsks([])
         void refreshWorkspaces() // the session now has a title
         if (e.stopReason !== 'end_turn') setState((s) => ({ ...s, items: [...s.items, { kind: 'info', text: `Turn ended: ${e.stopReason}` }] }))
         break
@@ -72,7 +75,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
       else buffered.current.set(id, [...(buffered.current.get(id) ?? []), e])
     })
   }, [])
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [state.items, perms])
+  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [state.items, perms, asks])
 
   const adopt = (r: CodeStartResult): void => {
     if (r.status === 'ready') {
@@ -91,7 +94,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const begin = async (dir: string, sessionId?: string): Promise<void> => {
     if (idRef.current) void window.api.code.stop(idRef.current)
     idRef.current = undefined
-    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setBusy(false); setMessage(''); setActiveSessionId(undefined); setSearching(false)
+    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setAsks([]); setBusy(false); setMessage(''); setActiveSessionId(undefined); setSearching(false)
     const r = await window.api.code.start(dir)
     adopt(r)
     if (r.status === 'ready' && sessionId) await load(r.id, sessionId)
@@ -121,7 +124,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     const r = await window.api.code.resume(id, sessionId)
     if (r.status === 'ready') {
       setState({ ...replayHistory(r.history), mode: r.currentMode })
-      setModes(r.modes); setMode(r.currentMode); setConfigOptions(r.configOptions); setPerms([]); setBusy(false); setActiveSessionId(sessionId)
+      setModes(r.modes); setMode(r.currentMode); setConfigOptions(r.configOptions); setPerms([]); setAsks([]); setBusy(false); setActiveSessionId(sessionId)
     } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
   }
   const shown = useMemo(() => mergePending(workspaces, pending), [workspaces, pending])
@@ -155,7 +158,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     if (folder === path && activeSessionId === s.sessionId) {
       // The open session: leave it (the agent is stopped by the delete) and go back to the overview.
       idRef.current = undefined
-      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setBusy(false); setActiveSessionId(undefined)
+      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setAsks([]); setBusy(false); setActiveSessionId(undefined)
     }
     setWorkspaces((ws) => ws.map((w) => ({ ...w, sessions: w.sessions.filter((x) => x.sessionId !== s.sessionId) })))
     setPending((p) => p.filter((x) => x.session.sessionId !== s.sessionId))
@@ -189,7 +192,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     if (!r.ok) return setNotice(`Could not remove the worktree: ${r.error}`)
     if (folder === ws.path) {
       idRef.current = undefined
-      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setBusy(false); setActiveSessionId(undefined)
+      setFolder(undefined); setStatus('idle'); setState({ items: [] }); setPerms([]); setAsks([]); setBusy(false); setActiveSessionId(undefined)
     }
     setPending((p) => p.filter((x) => x.path !== ws.path))
     void refreshWorkspaces()
@@ -212,6 +215,12 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const answer = (p: Perm, optionId: string | null): void => {
     setPerms((ps) => ps.filter((x) => x.requestId !== p.requestId))
     void window.api.code.respondPermission(idRef.current!, p.requestId, optionId)
+  }
+
+  const reply = (a: Ask, answers: string[][] | null): void => {
+    setAsks((as) => as.filter((x) => x.requestId !== a.requestId))
+    const content = answers ? Object.fromEntries(a.questions.map((q, i) => [q.key, q.multi ? (answers[i] ?? []) : (answers[i]?.[0] ?? '')])) : null
+    void window.api.code.respondQuestion(idRef.current!, a.requestId, content)
   }
 
   const sidebar = (
@@ -332,7 +341,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
       <div className="messages">
         {status === 'ready' && !state.items.length && <div className="empty">Describe a task for the agent. File edits show up as diffs.</div>}
         {state.items.map((it, i) => <CodeRow key={i} item={it} />)}
-        {busy && !perms.length && <div className="muted thinking">…</div>}
+        {busy && !perms.length && !asks.length && <div className="muted thinking">…</div>}
         {perms.map((p) => (
           <div key={p.requestId} className="toolcard pending" role="alertdialog" aria-label="Permission request">
             <div className="toolhead">Permission needed: <strong>{p.title}</strong></div>
@@ -341,6 +350,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
             </div>
           </div>
         ))}
+        {asks.map((a) => <QuestionCard key={a.requestId} questions={a.questions} footer={a.footer} onSubmit={(v) => reply(a, v)} onDismiss={() => reply(a, null)} />)}
         <div ref={bottom} />
       </div>
       <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
