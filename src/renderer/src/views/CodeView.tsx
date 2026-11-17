@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeConfigOption, CodeEvent, CodeMode, CodeSessionInfo, CodeStartResult, CodeWorkspace, PermissionOption, CodeQuestion } from '@shared/types'
 import { normalizeConfigOptions } from '@shared/config-options'
-import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState } from '../codeState'
+import { applyCodeUpdate, replayHistory, type CodeItem, type CodeState, type CodeUsage } from '../codeState'
 import { Collapsible, Diff, Markdown, PlainText, QuestionCard } from '../components'
 import { MentionTextarea } from '../MentionTextarea'
 import { mergePending, type PendingSession } from '../sessions'
@@ -31,6 +31,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const [configOptions, setConfigOptions] = useState<CodeConfigOption[]>([])
   const [state, setState] = useState<CodeState>({ items: [] })
   const [busy, setBusy] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
   const [perms, setPerms] = useState<Perm[]>([])
   const [asks, setAsks] = useState<Ask[]>([])
   const [input, setInput] = useState('')
@@ -286,12 +287,29 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     </div>
   )
 
+  const statsDialog = statsOpen && state.usage && (
+    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setStatsOpen(false) }}>
+      <div className="modal prompt" role="dialog" aria-modal="true" aria-label="Context and session stats" onKeyDown={(e) => { if (e.key === 'Escape') setStatsOpen(false) }}>
+        <h3>Context &amp; session stats</h3>
+        <ContextGauge usage={state.usage} />
+        <div className="statgrid">
+          {statsRows(state, configOptions.find((x) => x.id === 'model')?.value, mode, activeSessionId).map(([k, v]) => (
+            <div className="statrow" key={k}><span className="muted">{k}</span><span>{v}</span></div>
+          ))}
+        </div>
+        <p className="muted">Source: vibe-cli /context and /status.</p>
+        <div className="row"><button onClick={() => setStatsOpen(false)}>Close</button></div>
+      </div>
+    </div>
+  )
+
   if (!folder || status === 'idle') {
     return (
       <>
         {sidebar}
         {searchDialog}
         {worktreeDialog}
+        {statsDialog}
         <div className="center dashboard">
           <h2>Code</h2>
           <p className="muted">Pick a project folder. Mistral Vibe runs inside it and can read and edit files there.</p>
@@ -307,6 +325,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     {sidebar}
     {searchDialog}
     {worktreeDialog}
+    {statsDialog}
     <div className="content">
       <header className="bar">
         {status === 'ready' && (['model', 'thinking'] as const).map((id) => {
@@ -329,7 +348,11 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
             </select>
           </label>
         )}
-        {state.usage && <span className="muted ctx" title="Context used">{Math.round((100 * state.usage.used) / state.usage.size)}% context</span>}
+        {state.usage && (
+          <button className="ctx" title="Context used — click for the /context and /status breakdown" onClick={() => setStatsOpen((v) => !v)}>
+            {Math.round((100 * state.usage.used) / state.usage.size)}% context
+          </button>
+        )}
       </header>
       {state.title && <div className="muted subtitle">{state.title}</div>}
       {status === 'starting' && <div className="banner">{message || 'Starting Vibe…'}</div>}
@@ -372,6 +395,44 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
     </div>
     </>
   )
+}
+
+function fmtTokens(n: number): string {
+  return Math.round(n).toLocaleString('en-US')
+}
+
+function ContextGauge({ usage }: { usage: CodeUsage }) {
+  const pct = usage.size > 0 ? Math.min(100, Math.round((100 * usage.used) / usage.size)) : 0
+  return (
+    <div>
+      <div className="ctxbar" role="img" aria-label={`${pct}% of the context window used`}><div className="ctxfill" style={{ width: `${pct}%` }} /></div>
+      <div className="muted">{fmtTokens(usage.used)} / {fmtTokens(usage.size)} tokens used ({pct}%) — {fmtTokens(Math.max(0, usage.size - usage.used))} free</div>
+    </div>
+  )
+}
+
+/** The /status-style rows: session facts plus the stats Vibe sends in usage_update's _meta. */
+function statsRows(state: CodeState, model: string | undefined, mode: string, sessionId: string | undefined): [string, string][] {
+  const u = state.usage
+  if (!u) return []
+  const rows: [string, string][] = [
+    ['Context used', `${fmtTokens(u.used)} / ${fmtTokens(u.size)} tokens (${Math.round((100 * u.used) / u.size)}%)`],
+    ['Free', `${fmtTokens(Math.max(0, u.size - u.used))} tokens`]
+  ]
+  if (model) rows.push(['Model', model])
+  if (mode) rows.push(['Mode', mode])
+  if (state.title) rows.push(['Session', `${state.title}${sessionId ? ` (${sessionId.slice(0, 8)})` : ''}`])
+  rows.push(['Turns', String(state.items.filter((i) => i.kind === 'user').length)])
+  rows.push(['Tool calls', String(state.items.filter((i) => i.kind === 'tool').length)])
+  if (u.steps !== undefined) rows.push(['Model calls', String(u.steps)])
+  if (u.promptTokens !== undefined) rows.push(['Prompt tokens', fmtTokens(u.promptTokens)])
+  if (u.completionTokens !== undefined) rows.push(['Completion tokens', fmtTokens(u.completionTokens)])
+  if (u.cachedTokens) rows.push(['Cached tokens', fmtTokens(u.cachedTokens)])
+  if (u.totalTokens !== undefined) rows.push(['Total LLM tokens', fmtTokens(u.totalTokens)])
+  if (u.tokensPerSecond) rows.push(['Speed', `${u.tokensPerSecond.toFixed(1)} tok/s`])
+  if (u.lastTurnDuration !== undefined) rows.push(['Last turn', `${u.lastTurnDuration.toFixed(1)}s${u.lastTurnTotalTokens ? ` · ${fmtTokens(u.lastTurnTotalTokens)} tokens` : ''}`])
+  if (u.cost) rows.push(['Session cost', `${u.cost.amount < 1 ? u.cost.amount.toFixed(4) : u.cost.amount.toFixed(2)} ${u.cost.currency}`])
+  return rows
 }
 
 function CodeRow({ item }: { item: CodeItem }) {

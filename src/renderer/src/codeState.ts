@@ -12,11 +12,26 @@ export type CodeItem =
   | { kind: 'error'; text: string }
   | { kind: 'info'; text: string }
 
+/** ACP `usage_update`: context usage plus the session stats Vibe puts in `_meta` (same source as /status). */
+export interface CodeUsage {
+  used: number
+  size: number
+  cost?: { amount: number; currency: string }
+  steps?: number
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number
+  totalTokens?: number
+  tokensPerSecond?: number
+  lastTurnDuration?: number
+  lastTurnTotalTokens?: number
+}
+
 export interface CodeState {
   items: CodeItem[]
   title?: string
   mode?: string
-  usage?: { used: number; size: number }
+  usage?: CodeUsage
 }
 
 type Update = Record<string, unknown> & { sessionUpdate: string }
@@ -94,8 +109,28 @@ export function applyCodeUpdate(state: CodeState, u: Update, opts: { replay?: bo
       return typeof u.title === 'string' ? { ...state, title: u.title } : state
     case 'current_mode_update':
       return typeof u.currentModeId === 'string' ? { ...state, mode: u.currentModeId } : state
-    case 'usage_update':
-      return typeof u.used === 'number' && typeof u.size === 'number' ? { ...state, usage: { used: u.used, size: u.size } } : state
+    case 'usage_update': {
+      if (typeof u.used !== 'number' || typeof u.size !== 'number') return state
+      const meta = (u._meta ?? {}) as Record<string, unknown>
+      const num = (k: string): number | undefined => (typeof meta[k] === 'number' ? (meta[k] as number) : undefined)
+      const cost = u.cost as { amount?: unknown; currency?: unknown } | undefined
+      return {
+        ...state,
+        usage: {
+          used: u.used,
+          size: u.size,
+          cost: typeof cost?.amount === 'number' && typeof cost.currency === 'string' ? { amount: cost.amount, currency: cost.currency } : undefined,
+          steps: num('steps'),
+          promptTokens: num('promptTokens'),
+          completionTokens: num('completionTokens'),
+          cachedTokens: num('cachedTokens'),
+          totalTokens: num('totalTokens'),
+          tokensPerSecond: num('tokensPerSecond'),
+          lastTurnDuration: num('lastTurnDuration'),
+          lastTurnTotalTokens: num('lastTurnTotalTokens')
+        }
+      }
+    }
     default:
       return state
   }
