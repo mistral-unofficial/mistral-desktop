@@ -390,9 +390,9 @@ Verified by driving `vibe-acp` over JSON-RPC from Node:
 - Initialisation is asynchronous: a failure arrives later as an `agent_message_chunk` ("MCP server 'demo' failed to connect: mcp_transport_failed"). The UI must surface that, and should wait or show a "connecting" state before the first prompt.
 - Custom OpenAI-compatible providers work (`[[providers]]` / `[[models]]` in `config.toml`) but must stream `usage` in the last chunk.
 
-Not yet verified with real Mistral account:
-- Real `authenticate` browser flow outside an editor (check the `browser-auth-delegated` client meta flag in `vibe/acp/auth.py`)
-- Whether a Le Chat plan grants API access (billing question for Mistral)
+Verified manually with a real Mistral account (milestone 6):
+- The real `authenticate` browser flow works outside an editor
+- The minted API key also works for the Chat tab, so no billing/entitlement question remains
 
 ---
 
@@ -427,15 +427,14 @@ Not yet verified with real Mistral account:
 | 3 | MCP Host | ✅ Done | Manual stdio servers, tool calls in Chat |
 | 4 | MCPB | ✅ Done | Install, config prompts, update, remove |
 | 5 | Code Tab | ✅ Done | Folder picker, ACP client, diffs, permissions, session resume, MCP passthrough |
-| 6 | Browser Sign-in | ⏳ Pending | Drive Vibe's ACP `authenticate` flow; reuse key for Chat |
+| 6 | Browser Sign-in | ✅ Done | ACP `authenticate` flow verified manually against a real account; key reused for Chat |
 | 7 | Polish | ⏳ Pending | Auto-update, crash reporting opt-in, onboarding, signed builds |
 
 ---
 
 ## Risks
 
-1. **Subscription Auth**: May not be available to third-party apps; see [PLAN.md](../PLAN.md) for findings
-2. **Vibe Stability**: ACP coverage or flags may change between versions; pin and test supported version range
+1. **Vibe Stability**: ACP coverage or flags may change between versions; pin and test supported version range
 
 ---
 

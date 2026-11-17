@@ -36,7 +36,9 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const [input, setInput] = useState('')
   const idRef = useRef<string | undefined>(undefined)
   const buffered = useRef(new Map<string, CodeEvent[]>())
-  const bottom = useRef<HTMLDivElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  // Follow new output only while the user is at (or near) the bottom; scrolling up pauses the follow.
+  const stick = useRef(true)
 
   const handle = (e: CodeEvent): void => {
     switch (e.type) {
@@ -75,7 +77,15 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
       else buffered.current.set(id, [...(buffered.current.get(id) ?? []), e])
     })
   }, [])
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [state.items, perms, asks])
+  useEffect(() => {
+    const el = scroller.current
+    // Set scrollTop on the pane itself: scrollIntoView also scrolls outer containers, which makes the layout wiggle.
+    if (el && stick.current) el.scrollTop = el.scrollHeight
+  }, [state.items, perms, asks])
+  const onScroll = (): void => {
+    const el = scroller.current
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
 
   const adopt = (r: CodeStartResult): void => {
     if (r.status === 'ready') {
@@ -94,7 +104,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
   const begin = async (dir: string, sessionId?: string): Promise<void> => {
     if (idRef.current) void window.api.code.stop(idRef.current)
     idRef.current = undefined
-    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setAsks([]); setBusy(false); setMessage(''); setActiveSessionId(undefined); setSearching(false)
+    setFolder(dir); setStatus('starting'); setState({ items: [] }); setPerms([]); setAsks([]); setBusy(false); setMessage(''); setActiveSessionId(undefined); setSearching(false); stick.current = true
     const r = await window.api.code.start(dir)
     adopt(r)
     if (r.status === 'ready' && sessionId) await load(r.id, sessionId)
@@ -117,14 +127,14 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
       const title = text.split('\n')[0]!.slice(0, 60)
       setPending((p) => (p.some((x) => x.session.sessionId === activeSessionId) ? p : [...p, { path: folder, session: { sessionId: activeSessionId, title, updatedAt: new Date().toISOString() } }]))
     }
-    setInput(''); setBusy(true)
+    setInput(''); setBusy(true); stick.current = true // own message: jump to the bottom even if scrolled up
     void window.api.code.prompt(idRef.current, text)
   }
   const load = async (id: string, sessionId: string): Promise<void> => {
     const r = await window.api.code.resume(id, sessionId)
     if (r.status === 'ready') {
       setState({ ...replayHistory(r.history), mode: r.currentMode })
-      setModes(r.modes); setMode(r.currentMode); setConfigOptions(r.configOptions); setPerms([]); setAsks([]); setBusy(false); setActiveSessionId(sessionId)
+      setModes(r.modes); setMode(r.currentMode); setConfigOptions(r.configOptions); setPerms([]); setAsks([]); setBusy(false); setActiveSessionId(sessionId); stick.current = true
     } else setState((s) => ({ ...s, items: [...s.items, { kind: 'error', text: `Could not resume: ${r.message}` }] }))
   }
   const shown = useMemo(() => mergePending(workspaces, pending), [workspaces, pending])
@@ -338,7 +348,7 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
           <div className="row"><button onClick={() => void begin(folder)}>Retry</button><button onClick={() => goSettings('account')}>Settings</button></div>
         </div>
       )}
-      <div className="messages">
+      <div className="messages" ref={scroller} onScroll={onScroll}>
         {status === 'ready' && !state.items.length && <div className="empty">Describe a task for the agent. File edits show up as diffs.</div>}
         {state.items.map((it, i) => <CodeRow key={i} item={it} />)}
         {busy && !perms.length && !asks.length && <div className="muted thinking">…</div>}
@@ -351,7 +361,6 @@ export function CodeView({ goSettings, active }: { goSettings: (section?: Settin
           </div>
         ))}
         {asks.map((a) => <QuestionCard key={a.requestId} questions={a.questions} footer={a.footer} onSubmit={(v) => reply(a, v)} onDismiss={() => reply(a, null)} />)}
-        <div ref={bottom} />
       </div>
       <form className="composer" onSubmit={(e) => (e.preventDefault(), send())}>
         <MentionTextarea value={input} onChange={setInput} onSubmit={send} disabled={status !== 'ready'} placeholder="Tell the agent what to do…  (Enter to send, @ to attach files)"
